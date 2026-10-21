@@ -1,0 +1,14 @@
+# Dependencias solo para desarrollo y pruebas (Railway no las instala).
+-r requirements.txt
+
+# --- Directas ---
+pytest==9.1.1
+httpx==0.28.1
+
+# --- Transitivas ---
+certifi==2026.10.19
+httpcore==1.0.9
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+Pygments==2.21.0
