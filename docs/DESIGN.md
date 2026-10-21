@@ -98,7 +98,7 @@ erDiagram
 | Columna | Tipo | Restricciones |
 |---|---|---|
 | `id` | `bigint GENERATED ALWAYS AS IDENTITY` | PK |
-| `email` | `text` | NOT NULL; índice único sobre `lower(email)` |
+| `email` | `text` | NOT NULL, `CHECK` de formato (ver abajo); índice único sobre `lower(email)` |
 | `password_hash` | `text` | NOT NULL |
 | `role` | `text` | NOT NULL, `CHECK (role IN ('admin','demo'))` |
 | `is_active` | `boolean` | NOT NULL, default `true` |
@@ -107,16 +107,16 @@ erDiagram
 
 - **Índice único sobre `lower(email)`** (índice de expresión) y no un `UNIQUE` simple: así `Admin@x.com` y `admin@x.com` no pueden ser dos usuarios distintos, y el login busca con `WHERE lower(email) = lower(:email)` usando el índice. (Alternativa: la extensión `citext`; el índice de expresión enseña más y no necesita extensión.)
 - **`is_active`** permite bloquear a alguien sin borrarlo (se conserva quién escribió cada nota).
-- El usuario demo es una fila normal con `role = 'demo'` y una contraseña aleatoria que nadie conoce: se entra por el endpoint `/v1/auth/demo` (ver §4).
+- El usuario demo (`demo@fernwick.example`) es una fila normal con `role = 'demo'` y `password_hash = '!'`, que no es un hash válido: nadie puede entrar con contraseña. Se entra por el endpoint `/v1/auth/demo` (ver §4). Lo crea el comando `seed-demo`.
 
 #### `quotes` — las cotizaciones
 
 | Columna | Tipo | Restricciones |
 |---|---|---|
 | `id` | `bigint` identity | PK |
-| `name` | `varchar(100)` | NOT NULL, `CHECK (char_length(name) >= 2)` |
-| `email` | `varchar(254)` | NOT NULL |
-| `phone` | `varchar(30)` | NOT NULL |
+| `name` | `varchar(100)` | NOT NULL, `CHECK (char_length(btrim(name)) >= 2)` |
+| `email` | `varchar(254)` | NOT NULL, `CHECK (email ~ '^[^@[:space:]]+@[^@[:space:]]+$')` |
+| `phone` | `varchar(30)` | NOT NULL, `CHECK (char_length(regexp_replace(phone, '\D', '', 'g')) >= 10)` |
 | `service` | `text` | NOT NULL, `CHECK (service IN ('standard','recurring','deep','move','office','post-renovation'))` |
 | `home_size` | `text` | NOT NULL, `CHECK (home_size IN ('studio','2-bed','3-bed','4-bed','office'))` |
 | `preferred_date` | `date` | NOT NULL |
@@ -161,6 +161,8 @@ No lo pide el enunciado, pero cuesta una tabla pequeña y aporta: el detalle mue
 - **Restricciones repetidas en la base y en la API.** Pydantic da buenos mensajes de error al usuario; los `CHECK`/`NOT NULL` garantizan que **ningún** camino (un script, una consola `psql`, un bug) pueda guardar datos inválidos. La base es la última línea de defensa.
 - **`preferred_date >= hoy` solo se valida en la API.** Un `CHECK (preferred_date >= current_date)` sería incorrecto: las restricciones deben ser verdad **siempre**, y una cotización de ayer para hoy dejaría de cumplirla mañana (además PostgreSQL exige funciones inmutables en un `CHECK`).
 - **`varchar(n)` vs `text`.** En PostgreSQL rinden igual; se usa `varchar(n)` donde el límite es parte de la regla de negocio (el formulario ya limita `message` a 500) y `text` + `CHECK` donde el límite es más flexible.
+- **CHECK de nombre, email y teléfono** (los mismos mínimos que valida la landing): `btrim` impide un nombre de puros espacios; la expresión regular exige `algo@algo` sin espacios, lo que también rechaza el email vacío (`NOT NULL` solo impide `NULL`, no `''`); el teléfono se cuenta solo por dígitos, así que `(212) 555-0100` es válido. Son deliberadamente simples: la validación fina (dominio del email, etc.) la hace Pydantic; la base solo impide basura evidente.
+- **Convención de nombres** (`app/models/base.py`): toda restricción e índice recibe un nombre predecible (`pk_quotes`, `ck_quotes_status_valido`, `fk_quote_notes_quote_id_is_demo_quotes`, …). Sin ella, PostgreSQL inventa nombres que pueden variar entre bases, y una migración futura no sabría cómo referirse a la restricción para cambiarla. Además, el error de la base dice qué restricción falló, y las pruebas lo comprueban.
 - **`timestamptz` siempre.** Guarda un instante absoluto (internamente UTC). `timestamp` "sin zona" es ambiguo y es fuente clásica de bugs. Para agrupar por día en las métricas se usa la zona del negocio (`BUSINESS_TIMEZONE`, §5.6).
 - **`updated_at`** lo actualiza SQLAlchemy (`onupdate=func.now()`), no un trigger: hay un solo camino de escritura (la API) y es más fácil de seguir.
 - **`email` de `quotes` no es único:** la misma persona puede pedir varias cotizaciones.
@@ -193,10 +195,16 @@ Así es imposible que una nota "real" quede colgada de una cotización demo o al
 
 Notas de aprendizaje:
 
-- **El orden de columnas en un índice compuesto importa.** `(is_demo, status, created_at DESC)` sirve para `WHERE is_demo = false AND status = 'new' ORDER BY created_at DESC` sin ordenar en memoria. `is_demo` va primero porque **la política de RLS lo agrega a todas las consultas**.
+- **El orden de columnas en un índice compuesto importa.** `(is_demo, status, created_at DESC)` sirve para `WHERE is_demo = false AND status = 'new' ORDER BY created_at DESC` sin ordenar en memoria. `is_demo` va primero porque **todas las consultas filtran por él** (en la fase 5 lo hace la capa de servicios; desde la fase 6, también la política de RLS).
 - **PostgreSQL no crea índices en las FK automáticamente** (solo en PK y `UNIQUE`). Sin ellos, cada "notas de la cotización 42" y cada `ON DELETE CASCADE` recorrería toda la tabla hija. Los índices `(quote_id, …)` lo resuelven.
 - **¿Por qué trigramas?** Un B-tree normal solo ayuda con `LIKE 'texto%'` (prefijo). Un índice GIN de trigramas parte el texto en grupos de 3 letras y sirve para buscar "en cualquier parte" sin recorrer la tabla. Con pocos cientos de filas PostgreSQL quizá ni lo use (un recorrido secuencial es más barato), y está bien: lo verificaremos con `EXPLAIN ANALYZE` y es la forma correcta de preparar la búsqueda para crecer.
 - El teléfono se busca solo por dígitos (`regexp_replace(phone, '\D', '', 'g')`); con el volumen esperado no necesita índice.
+
+### 2.5 Migraciones y datos demo
+
+- El esquema lo definen los modelos de `app/models/` y lo aplica **Alembic** (`api/alembic/versions/`). La primera migración (`0001`) se generó con `--autogenerate` y se revisó a mano: se agregó `CREATE EXTENSION pg_trgm`, que autogenerate no detecta. `alembic check` confirma que modelos y base coinciden.
+- `alembic/env.py` toma la URL de `app/config.py` (`DATABASE_URL`); la URL nunca se escribe en `alembic.ini`.
+- **`python -m app.cli seed-demo`** es idempotente por **reinicio**: en una sola transacción crea el usuario demo si no existe (`INSERT … ON CONFLICT DO NOTHING`), borra las cotizaciones `is_demo` (el `CASCADE` arrastra notas e historial) y vuelve a crear 40 con una semilla aleatoria fija. Así nunca duplica, repara datos demo alterados y recalcula las fechas respecto de hoy para que el tablero de 30 días siempre tenga datos. Las cotizaciones reales no se tocan. (Los ids demo cambian en cada ejecución: la secuencia identity no se reinicia, y no hace falta.)
 
 ---
 
