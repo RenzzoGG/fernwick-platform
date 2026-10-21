@@ -6,7 +6,7 @@
 
 1. [Visión y alcance](#1-visión-y-alcance)
 2. [Modelo de datos](#2-modelo-de-datos)
-3. [Roles de base de datos y Row-Level Security](#3-roles-de-base-de-datos-y-row-level-security)
+3. [Roles de base de datos y Row-Level Security (fase 6)](#3-roles-de-base-de-datos-y-row-level-security-fase-6)
 4. [Endpoints de la API](#4-endpoints-de-la-api)
 5. [Seguridad](#5-seguridad)
 6. [Estructura del repositorio](#6-estructura-del-repositorio)
@@ -200,7 +200,11 @@ Notas de aprendizaje:
 
 ---
 
-## 3. Roles de base de datos y Row-Level Security
+## 3. Roles de base de datos y Row-Level Security (fase 6)
+
+> **Cuándo se construye:** RLS y los roles `fernwick_app` / `fernwick_demo` son una **fase propia (6)**, después de tener los endpoints funcionando (fases 3–5). Así primero se aprende el modelo y la API, y después se agrega la segunda capa de defensa sobre algo que ya funciona y tiene pruebas.
+>
+> **Hasta la fase 6:** la API se conecta con el rol dueño de la base (en local, `renzzo`) y el aislamiento del demo depende **solo** del filtro `is_demo` que aplica la capa de servicios (cubierto por pruebas en la fase 5). Por eso **no se despliega en Railway antes de la fase 6**.
 
 Esta es la decisión central de seguridad para la cuenta demo. La idea: **que aunque el código de la API tenga un bug, la base de datos se niegue a entregar filas reales al demo y se niegue a dejarlo escribir.** Es "defensa en profundidad": dos capas independientes.
 
@@ -348,7 +352,7 @@ Detalles de comportamiento:
   - `POST /v1/auth/demo`: 20 por minuto.
   - Responde **429** con header `Retry-After`.
   - Se guarda **en memoria**: suficiente con una sola instancia de la API. Si se escala a varias, hace falta Redis (§9).
-- **IP real detrás del proxy**: en Railway todas las peticiones llegan desde su proxy, así que la IP del cliente viene en `X-Forwarded-For`. Uvicorn se ejecuta con `--proxy-headers --forwarded-allow-ips="*"` (solo el proxy de Railway puede hablar con el contenedor). El header lo puede falsificar el cliente en su parte izquierda, así que en la fase 9 se verifica qué entrada agrega Railway y se usa esa.
+- **IP real detrás del proxy**: en Railway todas las peticiones llegan desde su proxy, así que la IP del cliente viene en `X-Forwarded-For`. Uvicorn se ejecuta con `--proxy-headers --forwarded-allow-ips="*"` (solo el proxy de Railway puede hablar con el contenedor). El header lo puede falsificar el cliente en su parte izquierda, así que en la fase 10 (despliegue) se verifica qué entrada agrega Railway y se usa esa.
 - **Validación** con Pydantic: longitudes (nombre 2–100, mensaje ≤ 500), `EmailStr`, teléfono con ≥ 10 dígitos, `service`/`size` como `Literal[...]`, fecha ≥ hoy en `BUSINESS_TIMEZONE`, recorte de espacios, `extra="forbid"` para rechazar campos desconocidos.
 - **Tamaño del cuerpo**: un middleware rechaza con 413 los cuerpos de más de 16 KB (una cotización legítima ocupa < 2 KB).
 - Si el honeypot y el límite no bastan, el siguiente paso es Cloudflare Turnstile (§9).
@@ -361,8 +365,9 @@ Detalles de comportamiento:
 
 | Variable | Servicio | Secreto | Ejemplo / descripción |
 |---|---|---|---|
-| `DATABASE_URL` | api | sí | `postgresql+psycopg://fernwick_app:…@host:5432/fernwick` — rol sin privilegios |
-| `MIGRATIONS_DATABASE_URL` | api | sí | URL del rol dueño, solo para Alembic y el seed |
+| `DATABASE_URL` | api | sí | `postgresql+psycopg://fernwick_app:…@host:5432/fernwick` — rol sin privilegios (hasta la fase 6: el rol dueño, que también usa Alembic) |
+| `MIGRATIONS_DATABASE_URL` | api | sí | Desde la fase 6: URL del rol dueño, solo para Alembic y el seed |
+| `TEST_DATABASE_URL` | api (solo local) | sí | Base de pruebas; su nombre **debe** terminar en `_test` (las pruebas la vacían) |
 | `JWT_SECRET` | api | sí | ≥ 32 bytes aleatorios |
 | `JWT_EXPIRE_MINUTES` | api | no | `60` |
 | `CORS_ORIGINS` | api | no | lista separada por comas |
@@ -393,14 +398,14 @@ fernwick-platform/
 │   │   ├── db.py              # Engine, sessionmaker, sesión por petición y SET LOCAL ROLE
 │   │   ├── security.py        # Hash de contraseñas (pwdlib) y JWT (PyJWT)
 │   │   ├── deps.py            # get_current_user, require_role, get_db_for_user
-│   │   ├── models/            # Modelos SQLAlchemy 2.0 (Mapped[...]): user.py, quote.py, note.py, status_change.py
+│   │   ├── models/            # Modelos SQLAlchemy 2.0 (Mapped[...]): base.py, user.py, quote.py, note.py, status_change.py
 │   │   ├── schemas/           # Esquemas Pydantic de entrada/salida
 │   │   ├── routers/           # health.py, public.py, auth.py, quotes.py, metrics.py
 │   │   ├── services/          # Lógica de negocio y consultas (quotes.py, metrics.py)
 │   │   └── cli.py             # create-admin, seed-demo
 │   ├── alembic/
 │   │   ├── env.py
-│   │   └── versions/          # Migraciones (tablas, roles, RLS, índices)
+│   │   └── versions/          # Migraciones: 0001 tablas e índices; roles y RLS en la fase 6
 │   ├── tests/                 # pytest: conftest.py (BD fernwick_test), test_*.py
 │   ├── alembic.ini
 │   ├── requirements.txt       # Producción: versiones exactas, incluidas las transitivas
@@ -429,7 +434,7 @@ fernwick-platform/
 
 - **routers → services → models.** Los routers solo traducen HTTP (validar entrada, códigos de estado); la lógica y las consultas viven en `services/`, que se pueden probar sin HTTP. Para un proyecto de este tamaño no se agrega una capa extra de "repositorios".
 - **SQLAlchemy síncrono** (no `async`): FastAPI ejecuta las rutas `def` en un pool de hilos, el tráfico esperado es mínimo y el código síncrono es más fácil de aprender y probar. Pasar a `async` más adelante es un cambio localizado en `db.py` y los servicios.
-- **Panel:** React Router para las páginas; `fetch` nativo (sin axios). Para las gráficas se propondrá una librería (p. ej. Recharts) o barras simples hechas con Tailwind; se decide en la fase 7 con aprobación, como cualquier dependencia nueva.
+- **Panel:** React Router para las páginas; `fetch` nativo (sin axios). Para las gráficas se propondrá una librería (p. ej. Recharts) o barras simples hechas con Tailwind; se decide en la fase 8 con aprobación, como cualquier dependencia nueva.
 - **Tests de la API** contra una base PostgreSQL real `fernwick_test` (no SQLite): RLS, `pg_trgm` y `generate_series` no existen en SQLite, y lo que queremos probar es justamente eso. Cada test corre dentro de una transacción que se revierte al final.
 
 ---
@@ -442,14 +447,15 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 |---|---|---|---|
 | 0 | Diseño | Este documento, `CLAUDE.md`, `.gitignore` | Revisión del documento |
 | 1 | Esqueleto de la API | `venv`, `requirements.txt`, `config.py`, `main.py`, `GET /health`, pytest configurado, `README.md` | `pytest` verde; `uvicorn` local y `curl localhost:8000/health` → `{"status":"ok","db":"ok"}` contra la base `fernwick` |
-| 2 | Base de datos | Modelos, Alembic, migración de tablas + índices + roles + RLS, comando `seed-demo` | `alembic upgrade head` y `alembic downgrade base` sin errores; en `psql`: como `fernwick_app` no se ven filas demo; con `SET ROLE fernwick_demo` solo se ven filas demo y un `INSERT` falla con `permission denied` |
+| 2 | Base de datos (sin RLS) | Modelos, Alembic, migración de tablas + índices, comando `seed-demo` idempotente | `alembic upgrade head` en `fernwick`; seed dos veces sin duplicar; pruebas contra `fernwick_test`: migración desde cero, restricciones que rechazan datos inválidos, relaciones y `ON DELETE` |
 | 3 | Formulario público | `POST /v1/public/quotes`, validación, honeypot, rate limit, límite de cuerpo | Tests: válido → 201 y fila en BD; inválido → 422; honeypot → 201 sin fila; 6.ª petición en un minuto → 429; cuerpo grande → 413 |
 | 4 | Autenticación | Hash, JWT, `login`, `demo`, `me`, `cli create-admin` | Tests: login correcto/incorrecto, token vencido o manipulado → 401, usuario desactivado → 401, demo apagado → 404 |
-| 5 | Endpoints del panel | Lista con filtros/búsqueda/paginación, detalle, cambio de estado con historial, notas, métricas | Tests: filtros y búsqueda; demo recibe 403 al escribir; **demo nunca ve una fila real** (ni en lista, detalle ni métricas); métricas con días en cero |
-| 6 | Panel I | Vite + React + Tailwind, login (incluido "Ver demo"), lista con filtro/búsqueda, detalle | Probado a mano contra la API local con admin y con demo; `npm run build` sin errores |
-| 7 | Panel II | Cambiar estado, agregar notas, tablero de métricas, banner y modo demo | Flujo completo admin; con demo no hay botones de edición y la API rechaza escrituras forzadas |
-| 8 | Conectar la landing | (Repo `fernwick-home-cleaning`) `fetch` real a la API, campo honeypot, manejo de errores 422/429 | Enviar desde la landing local → aparece en el panel local; subir `?v=` del JS según sus reglas |
-| 9 | Despliegue | Servicios de Railway, variables, dominios, migraciones, admin y seed en producción | Prueba de humo: `/health`, cotización desde `fernwick.renzzogg.com`, login admin, demo sin datos reales, CORS desde un origen no permitido falla |
+| 5 | Endpoints del panel | Lista con filtros/búsqueda/paginación, detalle, cambio de estado con historial, notas, métricas; filtro `is_demo` según el rol en la capa de servicios | Tests: filtros y búsqueda; demo recibe 403 al escribir; **demo nunca ve una fila real** (ni en lista, detalle ni métricas); métricas con días en cero |
+| 6 | Roles y Row-Level Security | Migración con roles `fernwick_app` / `fernwick_demo`, `GRANT`s y políticas (§3); `SET LOCAL ROLE` por petición; `MIGRATIONS_DATABASE_URL` | En `psql`: como `fernwick_app` no se ven filas demo; con `SET ROLE fernwick_demo` solo se ven filas demo y un `INSERT` falla con `permission denied`; las pruebas de la fase 5 siguen en verde con la API conectada como `fernwick_app`, más pruebas de aislamiento que saltan el filtro de servicios |
+| 7 | Panel I | Vite + React + Tailwind, login (incluido "Ver demo"), lista con filtro/búsqueda, detalle | Probado a mano contra la API local con admin y con demo; `npm run build` sin errores |
+| 8 | Panel II | Cambiar estado, agregar notas, tablero de métricas, banner y modo demo | Flujo completo admin; con demo no hay botones de edición y la API rechaza escrituras forzadas |
+| 9 | Conectar la landing | (Repo `fernwick-home-cleaning`) `fetch` real a la API, campo honeypot, manejo de errores 422/429 | Enviar desde la landing local → aparece en el panel local; subir `?v=` del JS según sus reglas |
+| 10 | Despliegue | Servicios de Railway, variables, dominios, migraciones, admin y seed en producción | Prueba de humo: `/health`, cotización desde `fernwick.renzzogg.com`, login admin, demo sin datos reales, CORS desde un origen no permitido falla |
 
 ---
 
