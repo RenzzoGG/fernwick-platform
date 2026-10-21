@@ -15,12 +15,16 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     # Sin valor por defecto: si falta, la API falla al arrancar con un error claro
     database_url: str
+    # Solo para pytest; opcional para que la API arranque sin ella (p. ej. en Railway)
+    test_database_url: str | None = None
 
-    @field_validator("database_url")
+    @field_validator("database_url", "test_database_url")
     @classmethod
-    def usar_driver_psycopg(cls, value: str) -> str:
+    def usar_driver_psycopg(cls, value: str | None) -> str | None:
         # Railway entrega "postgresql://..."; SQLAlchemy usaría psycopg2 (no instalado).
         # Se indica explícitamente el driver psycopg 3.
+        if value is None:
+            return None
         for prefijo in ("postgres://", "postgresql://"):
             if value.startswith(prefijo):
                 return "postgresql+psycopg://" + value.removeprefix(prefijo)
