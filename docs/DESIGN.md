@@ -372,6 +372,7 @@ Detalles de comportamiento:
 | `VITE_API_URL` | admin | **no** | `https://fernwick-api.renzzogg.com` — se incrusta en el JS en el build, así que es **pública** por definición |
 
 - Driver de PostgreSQL: **psycopg 3** (`postgresql+psycopg://`). Railway entrega URLs `postgresql://…`; `config.py` las normaliza.
+- En desarrollo local la conexión va por **socket Unix** con autenticación *peer* (sin contraseña): `postgresql+psycopg://renzzo@/fernwick?host=/var/run/postgresql`. Por TCP (`localhost:5432`) el PostgreSQL local exige contraseña.
 - Errores 500 sin trazas en producción (solo un id de error; el detalle va a los logs de Railway). Los logs nunca incluyen contraseñas, tokens ni el cuerpo completo de las cotizaciones.
 
 ### 5.7 Otros
@@ -402,8 +403,10 @@ fernwick-platform/
 │   │   └── versions/          # Migraciones (tablas, roles, RLS, índices)
 │   ├── tests/                 # pytest: conftest.py (BD fernwick_test), test_*.py
 │   ├── alembic.ini
-│   ├── requirements.txt       # Versiones exactas
-│   ├── .python-version        # 3.14 (igual que en local; lo lee Railpack)
+│   ├── requirements.txt       # Producción: versiones exactas, incluidas las transitivas
+│   ├── requirements-dev.txt   # -r requirements.txt + pytest, httpx
+│   ├── pytest.ini             # Configuración de pytest (no se usa pyproject.toml para no cambiar cómo Railpack instala)
+│   ├── .python-version        # 3.14 (igual que en local; lo lee Railpack, que si no usaría 3.13)
 │   └── .env.example
 ├── admin/
 │   ├── src/
@@ -420,7 +423,7 @@ fernwick-platform/
 ├── docs/
 │   └── DESIGN.md
 ├── CLAUDE.md
-├── README.md                  # Se agrega en la fase 1
+├── README.md                  # Cómo levantar la API y correr las pruebas
 └── .gitignore
 ```
 
@@ -499,5 +502,7 @@ Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pe
 - **Notificación por email** al admin cuando llega una cotización (p. ej. con un proveedor transaccional).
 - **Cloudflare Turnstile** en la landing si el honeypot y el límite no frenan el spam.
 - **Redis** para el límite de solicitudes si la API pasa a tener más de una instancia.
+- **SQLAlchemy 2.1**: ya existe; se empezó con 2.0.x (lo que define el stack). Migrar es un cambio de versión, con el mismo estilo de código 2.0.
+- **`httpx2`**: Starlette avisa que `TestClient` con `httpx` está obsoleto y sugiere `httpx2`; cambiarlo cuando sea estable (requiere aprobar la dependencia).
 - **Restablecer los datos demo** periódicamente (hoy no hace falta: el demo no puede escribir).
 - **Exportar a CSV** y paginación por cursor si el volumen crece.
