@@ -57,6 +57,8 @@ def test_busqueda_por_texto_usa_los_indices_de_nombre_y_email(db_session, volume
     texto = plan(db_session, "4b1c2a9f")
     assert "ix_quotes_name_trgm" in texto
     assert "ix_quotes_email_trgm" in texto
+    # Tiene dígitos pero no parece un teléfono: no se busca en él
+    assert "ix_quotes_phone_digits_trgm" not in texto
     assert "Seq Scan" not in texto
 
 

@@ -76,6 +76,12 @@ def test_busqueda_sin_digitos_suficientes_no_busca_en_el_telefono(client, admin,
     assert client.get(URL, params={"q": "x1"}, headers=bearer(admin)).json()["total"] == 0
 
 
+def test_texto_con_letras_no_busca_en_el_telefono(client, admin, db_session):
+    make_quote(db_session, name="Ada Lovelace", phone="212-555-0100")
+    # "a2125" tiene dígitos del teléfono, pero no es un teléfono: solo se busca en nombre y email
+    assert client.get(URL, params={"q": "a2125"}, headers=bearer(admin)).json()["total"] == 0
+
+
 def test_busqueda_escapa_los_comodines_de_like(client, admin, db_session):
     make_quote(db_session, name="Ana Ruiz")
     con_guion_bajo = make_quote(db_session, name="Ana_Ruiz")

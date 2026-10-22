@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import Quote, QuoteNote, QuoteStatusChange, User
 from app.models.quote import PHONE_DIGITS
-from app.schemas.quote import PublicQuoteCreate, QuoteListParams
+from app.schemas.quote import PHONE_CHARS, PublicQuoteCreate, QuoteListParams
 
 class StatusUnchangedError(Exception):
     """Se pidió cambiar al estado que la cotización ya tiene (la API responde 409)."""
@@ -61,8 +61,9 @@ def _search_condition(q: str) -> ColumnElement[bool]:
         Quote.email.ilike(pattern, escape="\\"),
     ]
     digits = "".join(char for char in q if char.isdigit())
-    # Solo si hay dígitos suficientes: con "ana" los dígitos serían "" y LIKE '%%' encontraría todo
-    if len(digits) >= PHONE_SEARCH_MIN_DIGITS:
+    # Solo si el texto parece un teléfono ("555-0123", "(212) 555"): con "ana" los dígitos
+    # serían "" y LIKE '%%' encontraría todo, y con "ab12c3" se buscaría un "123" sin sentido
+    if PHONE_CHARS.match(q) and len(digits) >= PHONE_SEARCH_MIN_DIGITS:
         branches.append(PHONE_DIGITS.like(f"%{digits}%"))
     return or_(*branches)
 
