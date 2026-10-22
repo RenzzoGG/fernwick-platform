@@ -355,11 +355,13 @@ Detalles de comportamiento:
 ### 5.5 Protección contra spam y abuso
 
 - **Honeypot**: la landing agrega un campo `website` oculto (fuera de la pantalla, `tabindex="-1"`, `autocomplete="off"`, `aria-hidden`). Las personas no lo ven y lo dejan vacío; muchos bots llenan todos los campos. Si llega con valor, la API responde **201 igual** pero **no guarda nada**: así el bot no aprende que fue detectado.
-- **Límite de solicitudes** con `slowapi`, por IP:
+- **Límite de solicitudes** por IP, con un limitador **propio** (`app/rate_limit.py`, sin dependencias; se descartó `slowapi`, que suma 3 paquetes, tiene poco mantenimiento y obliga a recibir `request` en cada ruta):
   - `POST /v1/public/quotes`: 5 por minuto y 20 por día.
   - `POST /v1/auth/login`: 10 por minuto (frena la fuerza bruta).
   - `POST /v1/auth/demo`: 20 por minuto.
-  - Responde **429** con header `Retry-After`.
+  - Responde **429** con header `Retry-After` (segundos hasta que vuelve a haber cupo).
+  - Algoritmo de **ventana deslizante**: por IP se guarda un `deque` con las horas de las solicitudes **aceptadas**. Las rechazadas no se guardan, así la memoria por IP queda acotada al límite mayor y no se castiga más al que insiste. Un `threading.Lock` protege los datos porque las rutas `def` corren en varios hilos. Cada 1000 solicitudes se borran de memoria las IP inactivas.
+  - Se aplica como **dependencia** de FastAPI (`Depends(rate_limit(limiter))`). FastAPI resuelve las dependencias antes de validar el cuerpo, así que las solicitudes inválidas también cuentan y un bot no puede tantear gratis.
   - Se guarda **en memoria**: suficiente con una sola instancia de la API. Si se escala a varias, hace falta Redis (§9).
 - **IP real detrás del proxy**: en Railway todas las peticiones llegan desde su proxy, así que la IP del cliente viene en `X-Forwarded-For`. Uvicorn se ejecuta con `--proxy-headers --forwarded-allow-ips="*"` (solo el proxy de Railway puede hablar con el contenedor). El header lo puede falsificar el cliente en su parte izquierda, así que en la fase 10 (despliegue) se verifica qué entrada agrega Railway y se usa esa.
 - **Validación** con Pydantic: longitudes (nombre 2–100, mensaje ≤ 500), `EmailStr`, teléfono con ≥ 10 dígitos, `service`/`size` como `Literal[...]`, fecha ≥ hoy en `BUSINESS_TIMEZONE`, recorte de espacios, `extra="forbid"` para rechazar campos desconocidos.
@@ -404,6 +406,7 @@ fernwick-platform/
 │   ├── app/
 │   │   ├── main.py            # Crea la app FastAPI, middlewares (CORS, tamaño), incluye routers
 │   │   ├── middleware.py      # Límite de tamaño del cuerpo (413)
+│   │   ├── rate_limit.py      # Límite de solicitudes por IP en memoria (429)
 │   │   ├── config.py          # Settings con pydantic-settings
 │   │   ├── db.py              # Engine, sessionmaker, sesión por petición y SET LOCAL ROLE
 │   │   ├── security.py        # Hash de contraseñas (pwdlib) y JWT (PyJWT)
