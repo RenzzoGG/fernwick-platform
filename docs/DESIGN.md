@@ -347,7 +347,7 @@ Detalles de comportamiento:
 
 - Implementado con dependencias de FastAPI: `current_user = Depends(get_current_user)` y `Depends(require_role("admin"))` en las rutas de escritura.
 - **Cuenta demo**: `POST /v1/auth/demo` entrega un token del usuario demo **sin contraseña**. Ventaja frente a publicar "usuario: demo / clave: demo123": no existe ninguna contraseña que pueda filtrarse o reutilizarse, y se apaga con `DEMO_ENABLED=false`. Tiene su propio límite de solicitudes. El panel muestra un botón "Ver demo" en el login y un banner permanente "Modo demo — datos ficticios"; los botones de edición se ocultan (la seguridad real está en la API y en la base, la interfaz solo es cortesía).
-- **Admin inicial**: se crea por consola con `python -m app.cli create-admin --email …` (pide la contraseña sin mostrarla). No se crea desde variables de entorno para no dejar una contraseña de admin guardada en Railway.
+- **Admin inicial**: se crea por consola con `python -m app.cli create-admin --email …`. La contraseña se pide dos veces con `getpass`, sin mostrarla; no va como argumento, porque quedaría en el historial y en la lista de procesos. Debe tener entre 12 y 128 caracteres (el tope evita hashear textos gigantes). El email se valida con `email-validator` y, si ya existe (sin distinguir mayúsculas), el comando termina con error y no cambia nada. La lógica está en `services/auth.py` (`create_admin`), que se prueba sin consola. No se crea desde variables de entorno para no dejar una contraseña de admin guardada en Railway.
 
 ### 5.4 CORS
 

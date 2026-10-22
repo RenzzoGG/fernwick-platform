@@ -1,11 +1,14 @@
 """Comandos de administración. Uso: python -m app.cli <comando>
 
 Comandos:
-  seed-demo   Crea (o reinicia) los datos ficticios de la cuenta demo.
+  seed-demo                   Crea (o reinicia) los datos ficticios de la cuenta demo.
+  create-admin --email EMAIL  Crea un administrador (pide la contraseña sin mostrarla).
 """
 
 import argparse
+import getpass
 import random
+import sys
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import delete, func, select
@@ -15,8 +18,9 @@ from sqlalchemy.orm import Session
 from app.db import SessionLocal
 from app.models import Quote, QuoteNote, QuoteStatusChange, User
 from app.models.base import HOME_SIZES, SERVICES
+from app.models.user import DEMO_EMAIL
+from app.services.auth import AdminCreationError, create_admin
 
-DEMO_EMAIL = "demo@fernwick.example"  # .example es un dominio reservado: nunca será real
 DEMO_QUOTE_COUNT = 40
 # Semilla fija: cada ejecución genera exactamente las mismas cotizaciones
 RANDOM_SEED = 42
@@ -206,6 +210,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="Comandos de Fernwick API")
     subcommands = parser.add_subparsers(dest="command", required=True)
     subcommands.add_parser("seed-demo", help="crea o reinicia los datos ficticios de la cuenta demo")
+    admin_parser = subcommands.add_parser("create-admin", help="crea un usuario administrador")
+    admin_parser.add_argument("--email", required=True)
     args = parser.parse_args()
 
     if args.command == "seed-demo":
@@ -217,6 +223,20 @@ def main() -> None:
             f"Datos demo listos: {counts['quotes']} cotizaciones, "
             f"{counts['notes']} notas y {counts['status_changes']} cambios de estado."
         )
+    elif args.command == "create-admin":
+        # getpass: lee sin mostrar lo que se escribe. La contraseña no va como argumento
+        # porque quedaría en el historial de la terminal y en la lista de procesos.
+        password = getpass.getpass("Contraseña: ")
+        if getpass.getpass("Repite la contraseña: ") != password:
+            sys.exit("Las contraseñas no coinciden.")
+        try:
+            with SessionLocal() as session, session.begin():
+                user = create_admin(session, args.email, password)
+                # Se leen antes de cerrar la sesión (después el objeto ya no está ligado a ella)
+                email, user_id = user.email, user.id
+        except AdminCreationError as exc:
+            sys.exit(str(exc))
+        print(f"Administrador creado: {email} (id {user_id}).")
 
 
 if __name__ == "__main__":

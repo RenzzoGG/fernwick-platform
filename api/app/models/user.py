@@ -5,6 +5,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import EMAIL_CHECK, USER_ROLES, Base, sql_in
 
+# Email del único usuario demo (lo crea `seed-demo` y lo usa POST /v1/auth/demo).
+# .example es un dominio reservado: nunca será real.
+DEMO_EMAIL = "demo@fernwick.example"
 
 class User(Base):
     """Personas que pueden entrar al panel (administradores y la cuenta demo)."""
