@@ -23,6 +23,8 @@ python3 -m venv .venv                     # crea el entorno virtual (no se commi
 source .venv/bin/activate                 # actívalo; el prompt muestra (.venv)
 pip install -r requirements-dev.txt       # dependencias de la app + pruebas, versiones exactas
 cp .env.example .env                      # configuración local (no se commitea); ajusta las URLs si hace falta
+# pon un JWT_SECRET en .env (obligatorio; sin él ni la API ni Alembic arrancan):
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 alembic upgrade head                      # crea las tablas en la base de DATABASE_URL
 python -m app.cli seed-demo               # (opcional) datos ficticios para la cuenta demo
 ```
@@ -64,6 +66,38 @@ curl -i -X POST http://localhost:8000/v1/public/quotes \
 - `website` es el honeypot: si llega con valor, responde `201` pero no guarda nada.
 - Cuerpo de más de 10 KB → `413`. Más de 5 solicitudes por minuto (o 20 por día) desde la misma IP → `429` con `Retry-After`. El límite vive en memoria: reiniciar `uvicorn` lo borra.
 - Solo los orígenes de `CORS_ORIGINS` pueden llamar a la API desde un navegador.
+
+### Autenticación del panel
+
+Crear el primer administrador (pide la contraseña dos veces sin mostrarla; 12 a 128 caracteres):
+
+```bash
+python -m app.cli create-admin --email tu-email@example.com
+```
+
+Con la API levantada:
+
+```bash
+# Login de admin → token (válido JWT_EXPIRE_MINUTES minutos)
+curl -s -X POST http://localhost:8000/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email": "tu-email@example.com", "password": "tu contraseña"}'
+# {"access_token":"eyJ...","token_type":"bearer","expires_in":3600,"role":"admin"}
+
+# Cuenta demo (sin contraseña; requiere DEMO_ENABLED=true y haber corrido seed-demo)
+curl -s -X POST http://localhost:8000/v1/auth/demo
+
+# Quién soy: rutas privadas con el header Authorization
+TOKEN=$(curl -s -X POST http://localhost:8000/v1/auth/demo | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+curl -s http://localhost:8000/v1/auth/me -H "Authorization: Bearer $TOKEN"
+# {"id":1,"email":"demo@fernwick.example","role":"demo"}
+```
+
+- Email o contraseña incorrectos, usuario inactivo o intento de entrar al demo con contraseña → `401` con el mismo mensaje.
+- Sin token, token vencido, manipulado o de un usuario desactivado → `401`. Rol sin permiso → `403`.
+- Límites por IP: login 10 por minuto, demo 20 por minuto → `429` con `Retry-After`.
+- `/v1/auth/demo` responde `404` si `DEMO_ENABLED=false` o si falta el usuario demo.
+- En `/docs`, el botón **Authorize** permite pegar un token y probar las rutas privadas.
 
 ### Base de datos: migraciones y datos demo
 
@@ -112,6 +146,9 @@ Las pruebas usan la base de `TEST_DATABASE_URL` (`fernwick_test`), nunca la de d
 | `TEST_DATABASE_URL` | `postgresql+psycopg://renzzo@/fernwick_test?host=/var/run/postgresql` | Base de pruebas (solo pytest) |
 | `CORS_ORIGINS` | `http://localhost:8000,http://localhost:5173` | Orígenes que pueden llamar a la API desde el navegador, separados por comas (nunca `*`; vacío = ninguno) |
 | `BUSINESS_TIMEZONE` | `America/New_York` | Zona del negocio: define qué es "hoy" para validar `preferred_date` |
+| `JWT_SECRET` | *(genera uno)* | Clave para firmar los tokens; obligatoria, ≥ 32 bytes: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Nunca se commitea |
+| `JWT_EXPIRE_MINUTES` | `60` | Duración de los tokens de acceso |
+| `DEMO_ENABLED` | `true` | Activa `POST /v1/auth/demo` (por defecto `false`) |
 | `CLIENT_IP_HEADER` | `none` | De dónde sale la IP del visitante para el límite de solicitudes: `none` (IP de la conexión), `x-forwarded-for` o `cf-connecting-ip` (producción). Con `none` los encabezados de proxy se ignoran |
 
 La lista completa (incluidas las de fases futuras) está en `docs/DESIGN.md` §5.6.
