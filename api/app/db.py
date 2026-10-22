@@ -7,7 +7,7 @@ el usuario con el que se abrió la conexión: en Railway ya es fernwick_app; en 
 
 from collections.abc import Iterator
 
-from sqlalchemy import Connection, create_engine, event, pool, text
+from sqlalchemy import Connection, Engine, create_engine, event, pool, text
 from sqlalchemy.orm import Session, SessionTransaction, sessionmaker
 
 from app.config import get_settings
@@ -75,3 +75,33 @@ def owner_session() -> Session:
     """
     owner_engine = create_engine(get_settings().owner_database_url, poolclass=pool.NullPool)
     return Session(bind=owner_engine, autoflush=False, expire_on_commit=False)
+
+
+def check_login_role(target: Engine) -> None:
+    """Falla si la API inicia sesión en PostgreSQL con un rol que se salta RLS.
+
+    Los superusuarios y los roles con BYPASSRLS ignoran las políticas siempre, y el dueño de
+    las tablas puede desactivarlas. En producción la API debe entrar como fernwick_app
+    (DESIGN §3.1); main.py llama a esta función al arrancar y, si falla, la API no arranca.
+    """
+    with target.connect() as connection:
+        superuser, bypassrls, owner = connection.execute(
+            text(
+                """
+                SELECT r.rolsuper, r.rolbypassrls,
+                       EXISTS (SELECT FROM pg_class c WHERE c.relowner = r.oid
+                               AND c.relnamespace = 'public'::regnamespace)
+                FROM pg_roles r WHERE r.rolname = session_user
+                """
+            )
+        ).one()
+    reasons = [
+        name
+        for name, present in (("superusuario", superuser), ("BYPASSRLS", bypassrls), ("dueño de las tablas", owner))
+        if present
+    ]
+    if reasons:
+        raise RuntimeError(
+            "DATABASE_URL entra con un rol que se salta RLS (" + ", ".join(reasons) + "). "
+            "Usa el rol fernwick_app (DESIGN §3.1 y §8.2)."
+        )

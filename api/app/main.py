@@ -1,6 +1,8 @@
 """Punto de entrada de la API: `uvicorn app.main:app`."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +10,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import DBAPIError
 
 from app.config import get_settings
+from app.db import check_login_role, engine
 from app.deps import FORBIDDEN_DETAIL
 from app.logging_config import configure_logging
 from app.middleware import BodySizeLimitMiddleware
@@ -24,8 +27,20 @@ configure_logging(settings.environment)
 # Una cotización legítima ocupa < 2 KB; 10 KB deja margen y frena cuerpos gigantes
 MAX_BODY_BYTES = 10 * 1024
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Lo que corre al arrancar (antes del yield) y al apagar la API."""
+    # En producción: no arrancar si la conexión se salta RLS. En desarrollo la conexión es la
+    # del dueño a propósito (DESIGN §3.3) y cada transacción baja a fernwick_app.
+    if settings.is_production:
+        check_login_role(engine)
+    yield
+
+
 app = FastAPI(
     title="Fernwick API",
+    lifespan=lifespan,
     version="0.1.0",
     # La documentación automática solo fuera de producción (no exponer el mapa de la API)
     docs_url=None if settings.is_production else "/docs",
