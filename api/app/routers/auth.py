@@ -12,6 +12,7 @@ from app.deps import get_current_user
 from app.models import User
 from app.rate_limit import RateLimiter, rate_limit
 from app.schemas.auth import CurrentUser, LoginRequest, TokenResponse
+from app.schemas.errors import DEMO_NOT_FOUND, LOGIN_FAILED, TOO_MANY_REQUESTS, UNAUTHORIZED
 from app.security import create_access_token
 from app.services.auth import authenticate, get_demo_user, record_login
 
@@ -33,7 +34,10 @@ def _token_for(user: User, settings: Settings) -> TokenResponse:
 
 
 @router.post(
-    "/login", response_model=TokenResponse, dependencies=[Depends(rate_limit(login_limiter))]
+    "/login",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit(login_limiter))],
+    responses={**LOGIN_FAILED, **TOO_MANY_REQUESTS},
 )
 def login(
     data: LoginRequest,
@@ -55,7 +59,10 @@ def login(
 
 
 @router.post(
-    "/demo", response_model=TokenResponse, dependencies=[Depends(rate_limit(demo_limiter))]
+    "/demo",
+    response_model=TokenResponse,
+    dependencies=[Depends(rate_limit(demo_limiter))],
+    responses={**DEMO_NOT_FOUND, **TOO_MANY_REQUESTS},
 )
 def demo_login(
     db: Annotated[Session, Depends(get_db)],
@@ -72,6 +79,6 @@ def demo_login(
     return _token_for(user, settings)
 
 
-@router.get("/me", response_model=CurrentUser)
+@router.get("/me", response_model=CurrentUser, responses=UNAUTHORIZED)
 def me(user: Annotated[User, Depends(get_current_user)]) -> CurrentUser:
     return CurrentUser.model_validate(user)

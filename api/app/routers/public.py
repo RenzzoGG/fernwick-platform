@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.rate_limit import RateLimiter, rate_limit
+from app.schemas.errors import PAYLOAD_TOO_LARGE, TOO_MANY_REQUESTS
 from app.schemas.quote import PublicQuoteCreate, PublicQuoteCreated
 from app.services.quotes import create_public_quote, fake_quote_receipt
 
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/v1/public", tags=["public"])
     response_model=PublicQuoteCreated,
     # Las dependencias de `dependencies=[...]` se ejecutan pero su valor no se usa
     dependencies=[Depends(rate_limit(quote_limiter))],
+    responses={**PAYLOAD_TOO_LARGE, **TOO_MANY_REQUESTS},
 )
 def create_quote(
     data: PublicQuoteCreate, db: Annotated[Session, Depends(get_db)]

@@ -16,7 +16,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
+@router.get(
+    "/health",
+    responses={
+        200: {"content": {"application/json": {"example": {"status": "ok", "db": "ok"}}}},
+        503: {
+            "description": "La base de datos no responde.",
+            "content": {"application/json": {"example": {"status": "error", "db": "unavailable"}}},
+        },
+    },
+)
 def health(db: Annotated[Session, Depends(get_db)]) -> JSONResponse:
     try:
         # La consulta más barata posible: solo confirma que hay conexión
