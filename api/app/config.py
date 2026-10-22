@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from typing import Annotated, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -20,6 +21,8 @@ class Settings(BaseSettings):
     # Orígenes (páginas web) que pueden llamar a la API desde el navegador.
     # NoDecode: se lee como texto "a,b,c" y no como JSON. Vacío = ningún origen permitido.
     cors_origins: Annotated[list[str], NoDecode] = []
+    # Zona horaria del negocio: define qué es "hoy" (fechas del formulario, métricas por día)
+    business_timezone: str = "America/New_York"
 
     @field_validator("database_url", "test_database_url")
     @classmethod
@@ -43,6 +46,16 @@ class Settings(BaseSettings):
         if "*" in origins:
             raise ValueError("CORS_ORIGINS no admite '*': lista los orígenes explícitamente")
         return origins
+
+    @field_validator("business_timezone")
+    @classmethod
+    def zona_existe(cls, value: str) -> str:
+        # Falla al arrancar si la zona está mal escrita, no a mitad de una petición
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError(f"BUSINESS_TIMEZONE desconocida: {value!r}") from None
+        return value
 
     @property
     def is_production(self) -> bool:

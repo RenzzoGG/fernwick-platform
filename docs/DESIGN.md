@@ -126,7 +126,7 @@ erDiagram
 | `created_at` | `timestamptz` | NOT NULL, default `now()` |
 | `updated_at` | `timestamptz` | NOT NULL, default `now()` |
 
-Los valores de `service` y `home_size` son **exactamente** los `value` de los `<select>` de la landing, para que no haya que traducir nada entre el formulario y la API. En la API se llama `home_size`; la landing envía `size` y el esquema de Pydantic lo acepta con un alias.
+Los valores de `service` y `home_size` son **exactamente** los `value` de los `<select>` de la landing, para que no haya que traducir valores entre el formulario y la API. Los **nombres** de los campos sí difieren: el HTML usa `size` y `date`, pero la API acepta solo `home_size` y `preferred_date` (un solo vocabulario en base, API y panel, sin alias). El `fetch` de la landing (fase 9) arma el JSON con estos nombres.
 
 #### `quote_notes` — notas internas
 
@@ -287,7 +287,7 @@ Convenciones:
 | Método | Ruta | Acceso | Entrada | Salida (éxito) | Errores |
 |---|---|---|---|---|---|
 | GET | `/health` | público | — | `200 {"status":"ok","db":"ok"}` | 503 si no hay base |
-| POST | `/v1/public/quotes` | público | `{name, email, phone, service, size, date, message?, website?}` | `201 {"id", "created_at"}` | 422, 413, 429 |
+| POST | `/v1/public/quotes` | público | `{name, email, phone, service, home_size, preferred_date, message?, website?}` | `201 {"id", "created_at"}` | 422, 413, 429 |
 | POST | `/v1/auth/login` | público | `{email, password}` | `200 {"access_token", "token_type":"bearer", "expires_in", "role"}` | 401, 429 |
 | POST | `/v1/auth/demo` | público (si `DEMO_ENABLED`) | — | igual que login, `role: "demo"` | 404 si está desactivado, 429 |
 | GET | `/v1/auth/me` | admin, demo | — | `200 {"id", "email", "role"}` | 401 |
@@ -308,7 +308,7 @@ StatusChange = {from_status, to_status, changed_by_email | null, changed_at}
 
 Detalles de comportamiento:
 
-- **Formulario público.** Los nombres de entrada son los del formulario de la landing (`size`, `date`) para no cambiarlo; Pydantic los mapea a `home_size` y `preferred_date`. `website` es el **honeypot** (§5.5). La respuesta no repite los datos: el visitante ya los tiene.
+- **Formulario público** (`routers/public.py` → `services/quotes.py`). Los campos se llaman igual que las columnas (`home_size`, `preferred_date`); el `fetch` de la landing los mapea desde los `name` del HTML (`size`, `date`). `website` es el **honeypot** (§5.5). El cliente **no** puede enviar `status`, `is_demo`, `id` ni fechas (422 `extra_forbidden`): el servidor fija `status = 'new'` e `is_demo = false`. La respuesta no repite los datos: el visitante ya los tiene.
 - **`404` y no `403`** cuando un demo pide `/v1/quotes/{id}` de una cotización real: RLS hace que la fila "no exista" para él, y así ni siquiera se filtra que ese id existe.
 - **Búsqueda `q`**: busca en nombre, email (`ILIKE`) y teléfono (por dígitos). Los parámetros siempre van como parámetros enlazados de SQLAlchemy, nunca concatenados (inyección SQL).
 - **`sort`**: lista blanca (`created_at`, `-created_at`, `preferred_date`, `-preferred_date`); cualquier otro valor da 422.
@@ -354,7 +354,7 @@ Detalles de comportamiento:
 
 ### 5.5 Protección contra spam y abuso
 
-- **Honeypot**: la landing agrega un campo `website` oculto (fuera de la pantalla, `tabindex="-1"`, `autocomplete="off"`, `aria-hidden`). Las personas no lo ven y lo dejan vacío; muchos bots llenan todos los campos. Si llega con valor, la API responde **201 igual** pero **no guarda nada**: así el bot no aprende que fue detectado.
+- **Honeypot**: la landing agrega un campo `website` oculto (fuera de la pantalla, `tabindex="-1"`, `autocomplete="off"`, `aria-hidden`). Las personas no lo ven y lo dejan vacío; muchos bots llenan todos los campos. Si llega con valor (sin contar espacios), la API responde **201 igual**, con la misma forma (`id` aleatorio de 4 cifras y `created_at` actual), pero **no guarda nada**: así el bot no aprende que fue detectado. Solo se registra un log sin datos personales.
 - **Límite de solicitudes** por IP, con un limitador **propio** (`app/rate_limit.py`, sin dependencias; se descartó `slowapi`, que suma 3 paquetes, tiene poco mantenimiento y obliga a recibir `request` en cada ruta):
   - `POST /v1/public/quotes`: 5 por minuto y 20 por día.
   - `POST /v1/auth/login`: 10 por minuto (frena la fuerza bruta).
@@ -364,7 +364,7 @@ Detalles de comportamiento:
   - Se aplica como **dependencia** de FastAPI (`Depends(rate_limit(limiter))`). FastAPI resuelve las dependencias antes de validar el cuerpo, así que las solicitudes inválidas también cuentan y un bot no puede tantear gratis.
   - Se guarda **en memoria**: suficiente con una sola instancia de la API. Si se escala a varias, hace falta Redis (§9).
 - **IP real detrás del proxy**: en Railway todas las peticiones llegan desde su proxy, así que la IP del cliente viene en `X-Forwarded-For`. Uvicorn se ejecuta con `--proxy-headers --forwarded-allow-ips="*"` (solo el proxy de Railway puede hablar con el contenedor). El header lo puede falsificar el cliente en su parte izquierda, así que en la fase 10 (despliegue) se verifica qué entrada agrega Railway y se usa esa.
-- **Validación** con Pydantic: longitudes (nombre 2–100, mensaje ≤ 500), `EmailStr`, teléfono con ≥ 10 dígitos, `service`/`size` como `Literal[...]`, fecha ≥ hoy en `BUSINESS_TIMEZONE`, recorte de espacios, `extra="forbid"` para rechazar campos desconocidos.
+- **Validación** con Pydantic (`schemas/quote.py`): longitudes tomadas de las mismas constantes que la tabla (`models/base.py`: nombre 2–100, email ≤ 254, teléfono ≤ 30, mensaje ≤ 500); `EmailStr` (paquete `email-validator`, sin consultas DNS); teléfono con solo dígitos, espacios y `+ ( ) - .`, y ≥ 10 dígitos; `service`/`home_size` como `Literal[*SERVICES]`/`Literal[*HOME_SIZES]` (sin copiar las listas); fecha entre hoy y hoy + 365 días en `BUSINESS_TIMEZONE` (el tope evita fechas absurdas como 9999-12-31); recorte de espacios (`str_strip_whitespace`); mensaje vacío → `NULL`; `extra="forbid"` para rechazar campos desconocidos. Mensajes de error en inglés, como la landing.
 - **Tamaño del cuerpo**: un middleware ASGI propio (`app/middleware.py`) rechaza con 413 los cuerpos de más de **10 KB** (una cotización legítima ocupa < 2 KB). Si llega `Content-Length`, responde sin leer el cuerpo. Si no llega (envío por partes, *chunked*) o miente, cuenta los bytes mientras se leen y corta al pasarse. Va por dentro de CORS para que el 413 también lleve los headers CORS y la landing pueda leerlo.
 - Si el honeypot y el límite no bastan, el siguiente paso es Cloudflare Turnstile (§9).
 

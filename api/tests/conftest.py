@@ -25,8 +25,9 @@ from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from app.db import engine  # noqa: E402
+from app.db import engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.routers.public import quote_limiter  # noqa: E402
 
 API_DIR = Path(__file__).resolve().parent.parent
 
@@ -64,9 +65,18 @@ def db_session() -> Iterator[Session]:
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def client(db_session: Session) -> Iterator[TestClient]:
+    # Las rutas usan la misma sesión que la prueba: sus commit() solo cierran un SAVEPOINT,
+    # todo se revierte al final y la prueba puede consultar lo que guardó la API
+    app.dependency_overrides[get_db] = lambda: db_session
     # TestClient llama a la app en el mismo proceso, sin levantar un servidor
     with TestClient(app) as test_client:
         yield test_client
     # Si un test reemplazó dependencias, se restauran para no afectar a los demás
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limits() -> None:
+    # El limitador vive en memoria del proceso: sin esto, una prueba agotaría el cupo de la siguiente
+    quote_limiter.reset()
