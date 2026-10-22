@@ -14,6 +14,11 @@ Sistema de cotizaciones de **Fernwick Home Cleaning**, un negocio de limpieza fi
 - PostgreSQL con dos bases a las que tu usuario de Linux pueda entrar por socket Unix sin contraseña (`psql -d fernwick` funciona):
   - `fernwick` — desarrollo.
   - `fernwick_test` — pruebas (pytest la vacía y la recrea; su nombre debe terminar en `_test`).
+- Tu usuario de PostgreSQL es el dueño de las tablas y necesita, una sola vez, `CREATEROLE` (la migración `0003` crea los roles `fernwick_app` y `fernwick_demo`) y `BYPASSRLS` (las migraciones, `seed-demo` y las pruebas escriben filas reales y demo):
+
+  ```bash
+  sudo -u postgres psql -c "ALTER ROLE $USER CREATEROLE BYPASSRLS"
+  ```
 
 ### Primera vez
 
@@ -155,7 +160,41 @@ alembic upgrade head
 alembic check                             # confirma que modelos y base coinciden
 ```
 
-**Datos demo:** `python -m app.cli seed-demo` crea el usuario `demo@fernwick.example` (sin contraseña utilizable) y 40 cotizaciones ficticias con notas e historial, con un reparto realista de servicios (sobre todo `standard`, `recurring` y `deep`; pocas `office` y `post-renovation`). Es idempotente: cada ejecución borra las cotizaciones demo y las vuelve a crear, con fechas relativas a hoy, sin tocar las cotizaciones reales.
+**Datos demo:** `python -m app.cli seed-demo` (corre como el dueño, `MIGRATIONS_DATABASE_URL` o `DATABASE_URL`) crea el usuario `demo@fernwick.example` (sin contraseña utilizable) y 40 cotizaciones ficticias con notas e historial, con un reparto realista de servicios (sobre todo `standard`, `recurring` y `deep`; pocas `office` y `post-renovation`). Es idempotente: cada ejecución borra las cotizaciones demo y las vuelve a crear, con fechas relativas a hoy, sin tocar las cotizaciones reales.
+
+### Roles y Row-Level Security: comprobarlo a mano
+
+La API trabaja con dos roles sin privilegios (`docs/DESIGN.md` §3): `fernwick_app` (admin y formulario: solo filas reales) y `fernwick_demo` (solo lectura de filas demo). En local entras como el dueño, que salta RLS, y cada transacción de la API hace `SET LOCAL ROLE`. Con psql puedes hacer lo mismo (todo dentro de `BEGIN … ROLLBACK`, no cambia nada):
+
+```sql
+-- psql -d fernwick
+BEGIN;
+SET LOCAL ROLE fernwick_app;
+SELECT current_user, is_demo, count(*) FROM quotes GROUP BY 1, 2;  -- solo is_demo = f (0 filas si aún no hay reales)
+UPDATE quotes SET status = 'closed' WHERE is_demo;                  -- UPDATE 0: las demo "no existen"
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE fernwick_demo;
+SELECT current_user, is_demo, count(*) FROM quotes GROUP BY 1, 2;  -- solo is_demo = t (40 tras seed-demo)
+SELECT id, email FROM users;                                        -- solo demo@fernwick.example
+SELECT password_hash FROM users;                                    -- ERROR: permission denied for table users
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE fernwick_demo;
+UPDATE quotes SET status = 'closed';                                -- ERROR: permission denied for table quotes
+ROLLBACK;
+
+BEGIN;
+SET LOCAL ROLE fernwick_app;
+INSERT INTO quotes (name, email, phone, service, home_size, preferred_date, is_demo)
+VALUES ('Ana Ruiz', 'ana@example.com', '212-555-0100', 'standard', '2-bed', current_date, true);
+-- ERROR: new row violates row-level security policy for table "quotes"
+ROLLBACK;
+```
+
+Y fuera de cualquier transacción, `SELECT current_user;` vuelve a ser tu usuario: `SET LOCAL` dura solo hasta el `COMMIT`/`ROLLBACK`.
 
 ### Correr las pruebas
 

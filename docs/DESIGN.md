@@ -215,7 +215,7 @@ Notas de aprendizaje:
 
 > **Cuándo se construye:** RLS y los roles `fernwick_app` / `fernwick_demo` son una **fase propia (6)**, después de tener los endpoints funcionando (fases 3–5). Así primero se aprende el modelo y la API, y después se agrega la segunda capa de defensa sobre algo que ya funciona y tiene pruebas.
 >
-> **Hasta la fase 6:** la API se conecta con el rol dueño de la base (en local, `renzzo`) y el aislamiento del demo depende **solo** del filtro `is_demo` que aplica la capa de servicios (cubierto por pruebas en la fase 5). Por eso **no se despliega en Railway antes de la fase 6**.
+> **Antes de la fase 6** la API trabajaba con el rol dueño de la base (en local, `renzzo`) y el aislamiento del demo dependía **solo** del filtro `is_demo` de la capa de servicios (fase 5). **Desde la fase 6** hay dos capas independientes: ese filtro y RLS. Por eso no se despliega en Railway antes de la fase 6.
 
 Esta es la decisión central de seguridad para la cuenta demo. La idea: **que aunque el código de la API tenga un bug, la base de datos se niegue a entregar filas reales al demo y se niegue a dejarlo escribir.** Es "defensa en profundidad": dos capas independientes.
 
@@ -442,7 +442,7 @@ Detalles de comportamiento:
 
 | Variable | Servicio | Secreto | Ejemplo / descripción |
 |---|---|---|---|
-| `DATABASE_URL` | api | sí | `postgresql+psycopg://fernwick_app:…@host:5432/fernwick` — rol sin privilegios (hasta la fase 6: el rol dueño, que también usa Alembic) |
+| `DATABASE_URL` | api | sí | Producción: `postgresql+psycopg://fernwick_app:…@host:5432/fernwick` — rol sin privilegios (la API no arranca en producción con un rol que salte RLS, §3.1). Local: el dueño por socket (`renzzo`), y cada transacción baja a `fernwick_app` o `fernwick_demo` (§3.3) |
 | `MIGRATIONS_DATABASE_URL` | api | sí | Desde la fase 6: URL del rol dueño, solo para Alembic y `seed-demo` (`Settings.owner_database_url`). Opcional: si falta, se usa `DATABASE_URL` (en local el dueño es el mismo usuario) |
 | `TEST_DATABASE_URL` | api (solo local) | sí | Base de pruebas; su nombre **debe** terminar en `_test` (las pruebas la vacían) |
 | `JWT_SECRET` | api | sí | ≥ 32 bytes aleatorios |
@@ -487,7 +487,7 @@ fernwick-platform/
 │   │   └── cli.py             # create-admin, seed-demo
 │   ├── alembic/
 │   │   ├── env.py
-│   │   └── versions/          # Migraciones: 0001 tablas e índices; 0002 índice del teléfono; roles y RLS en la fase 6
+│   │   └── versions/          # Migraciones: 0001 tablas e índices; 0002 índice del teléfono; 0003 roles, GRANTs y RLS
 │   ├── tests/                 # pytest: conftest.py (BD fernwick_test), test_*.py
 │   ├── alembic.ini
 │   ├── requirements.txt       # Producción: versiones exactas, incluidas las transitivas
@@ -517,7 +517,7 @@ fernwick-platform/
 - **routers → services → models.** Los routers solo traducen HTTP (validar entrada, códigos de estado); la lógica y las consultas viven en `services/`, que se pueden probar sin HTTP. Para un proyecto de este tamaño no se agrega una capa extra de "repositorios".
 - **SQLAlchemy síncrono** (no `async`): FastAPI ejecuta las rutas `def` en un pool de hilos, el tráfico esperado es mínimo y el código síncrono es más fácil de aprender y probar. Pasar a `async` más adelante es un cambio localizado en `db.py` y los servicios.
 - **Panel:** React Router para las páginas; `fetch` nativo (sin axios). Para las gráficas se propondrá una librería (p. ej. Recharts) o barras simples hechas con Tailwind; se decide en la fase 8 con aprobación, como cualquier dependencia nueva.
-- **Tests de la API**: fixtures en `tests/conftest.py` (`db_session`, `client`, `admin`, `demo`) y funciones de apoyo en `tests/helpers.py` (`bearer`, `make_quote`, `local`). Corren contra una base PostgreSQL real `fernwick_test` (no SQLite): RLS, `pg_trgm` y `generate_series` no existen en SQLite, y lo que queremos probar es justamente eso. Cada test corre dentro de una transacción que se revierte al final.
+- **Tests de la API**: fixtures en `tests/conftest.py` (`db_session`, `client`, `admin`, `demo`) y funciones de apoyo en `tests/helpers.py` (`bearer`, `make_quote`, `local`, `como_rol`). La conexión de las pruebas es del dueño (que salta RLS, para preparar filas reales y demo); el `client` corre cada petición como `fernwick_app`/`fernwick_demo`, igual que en producción, así que las pruebas de la API también prueban RLS. Corren contra una base PostgreSQL real `fernwick_test` (no SQLite): RLS, `pg_trgm` y `generate_series` no existen en SQLite, y lo que queremos probar es justamente eso. Cada test corre dentro de una transacción que se revierte al final.
 
 ---
 
@@ -547,7 +547,7 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 
 | Servicio | Origen | Configuración |
 |---|---|---|
-| **Postgres** | Plantilla PostgreSQL de Railway | Volumen persistente. Elegir la versión mayor más cercana a la local (PostgreSQL 18) y verificar compatibilidad con `pg_trgm`. |
+| **Postgres** | Plantilla PostgreSQL de Railway | Volumen persistente. Elegir la versión mayor más cercana a la local (PostgreSQL 18; **mínimo 16**, por `GRANT … WITH INHERIT FALSE, SET TRUE` de la migración `0003`) y verificar compatibilidad con `pg_trgm`. |
 | **api** | Este repo, *Root Directory* `api/` | Railpack (Python). Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers` (la IP real la decide la app según `CLIENT_IP_HEADER`, §5.5). *Pre-deploy command*: `alembic upgrade head` (si la migración falla, no se publica la versión nueva). *Healthcheck*: `/health`. *Watch paths*: `api/**`. |
 | **admin** | Este repo, *Root Directory* `admin/` | Railpack (Node) con `npm ci` + `npm run build`, servido como sitio estático con Caddy: `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci` (igual que la landing). *Watch paths*: `admin/**`. `VITE_API_URL` definida antes del build. |
 
@@ -559,7 +559,15 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 - **api**: `MIGRATIONS_DATABASE_URL=${{Postgres.DATABASE_URL}}` (variable de referencia: Railway la mantiene actualizada si cambian credenciales). `DATABASE_URL` se arma a mano con el rol `fernwick_app` y el host interno de Railway (`${{Postgres.PGHOST}}`, `${{Postgres.PGPORT}}`, `${{Postgres.PGDATABASE}}`); el tráfico API ↔ base va por la **red privada** de Railway (sin costo de salida y sin exponer la base a internet). Resto: `JWT_SECRET`, `JWT_EXPIRE_MINUTES`, `CORS_ORIGINS`, `DEMO_ENABLED`, `BUSINESS_TIMEZONE`, `ENVIRONMENT=production`, `CLIENT_IP_HEADER=cf-connecting-ip`.
 - **admin**: `VITE_API_URL=https://fernwick-api.renzzogg.com`, `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci`.
 
-Primer despliegue (una sola vez): tras la migración, poner la contraseña de `fernwick_app` (`ALTER ROLE` desde `psql` con la URL del dueño), luego `railway run python -m app.cli create-admin` y `railway run python -m app.cli seed-demo`.
+**Primer despliegue (una sola vez, fase 10).** La migración `0003` crea los roles: necesita un dueño superusuario o con `CREATEROLE`. En Railway el usuario `postgres` es superusuario, así que no hace falta nada especial. El orden importa, porque `fernwick_app` nace **sin contraseña** y la API no puede entrar hasta que se la pongamos:
+
+1. Crear el servicio Postgres y las variables de la API, salvo `DATABASE_URL`.
+2. Migrar como dueño desde tu PC: `railway run alembic upgrade head`. Usa `MIGRATIONS_DATABASE_URL` y crea tablas, roles, GRANTs y políticas.
+3. Poner la contraseña de `fernwick_app`: entrar con `psql` usando la URL del dueño y ejecutar `\password fernwick_app`. psql calcula el hash SCRAM en tu PC, así que la contraseña no viaja en texto ni queda en los logs del servidor (con `ALTER ROLE … PASSWORD '…'` sí podría). Guardarla en un gestor de contraseñas.
+4. Definir `DATABASE_URL` con `fernwick_app` y esa contraseña (host interno, §8.2), y desplegar. El *pre-deploy* `alembic upgrade head` ya no tiene nada que hacer. Si `DATABASE_URL` apuntara por error a `postgres`, la API no arranca (§3.1).
+5. `railway run python -m app.cli create-admin` (usa `DATABASE_URL`, como `fernwick_app`) y `railway run python -m app.cli seed-demo` (usa `MIGRATIONS_DATABASE_URL`, el dueño: solo él puede escribir filas demo).
+
+Si algún día el dueño no fuera superusuario ni tuviera `CREATEROLE`, un superusuario crearía antes los dos roles a mano con el mismo SQL de la migración (`CREATE ROLE fernwick_app LOGIN …; CREATE ROLE fernwick_demo NOLOGIN …`); la migración los encuentra y sigue.
 
 ### 8.3 Dominios
 
