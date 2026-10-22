@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.db import SessionLocal
+from app.db import SessionLocal, owner_session
 from app.models import Quote, QuoteNote, QuoteStatusChange, User
 from app.models.base import HOME_SIZES, SERVICES
 from app.models.user import DEMO_EMAIL
@@ -217,7 +217,8 @@ def main() -> None:
     if args.command == "seed-demo":
         # session.begin(): hace commit al terminar el bloque, o rollback si hubo un error.
         # Así el reinicio es atómico: nunca quedan los datos demo a medias.
-        with SessionLocal() as session, session.begin():
+        # Como dueño: borra y crea filas demo, algo que RLS no le permite al rol de la API.
+        with owner_session() as session, session.begin():
             counts = seed_demo(session)
         print(
             f"Datos demo listos: {counts['quotes']} cotizaciones, "

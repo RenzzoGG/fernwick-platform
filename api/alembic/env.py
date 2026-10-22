@@ -19,9 +19,10 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    # Quien llame a Alembic desde código (las pruebas) puede fijar la URL;
-    # si no, se usa DATABASE_URL de la configuración, nunca un valor escrito en alembic.ini
-    return config.get_main_option("sqlalchemy.url") or get_settings().database_url
+    # Quien llame a Alembic desde código (las pruebas) puede fijar la URL; si no, la del dueño
+    # (MIGRATIONS_DATABASE_URL, o DATABASE_URL si no está). Nunca un valor escrito en alembic.ini.
+    # Las migraciones crean tablas, roles y políticas: el rol de la API no tiene permiso para eso.
+    return config.get_main_option("sqlalchemy.url") or get_settings().owner_database_url
 
 
 def run_migrations_offline() -> None:

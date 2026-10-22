@@ -396,7 +396,7 @@ Detalles de comportamiento:
 | Variable | Servicio | Secreto | Ejemplo / descripción |
 |---|---|---|---|
 | `DATABASE_URL` | api | sí | `postgresql+psycopg://fernwick_app:…@host:5432/fernwick` — rol sin privilegios (hasta la fase 6: el rol dueño, que también usa Alembic) |
-| `MIGRATIONS_DATABASE_URL` | api | sí | Desde la fase 6: URL del rol dueño, solo para Alembic y el seed |
+| `MIGRATIONS_DATABASE_URL` | api | sí | Desde la fase 6: URL del rol dueño, solo para Alembic y `seed-demo` (`Settings.owner_database_url`). Opcional: si falta, se usa `DATABASE_URL` (en local el dueño es el mismo usuario) |
 | `TEST_DATABASE_URL` | api (solo local) | sí | Base de pruebas; su nombre **debe** terminar en `_test` (las pruebas la vacían) |
 | `JWT_SECRET` | api | sí | ≥ 32 bytes aleatorios |
 | `JWT_EXPIRE_MINUTES` | api | no | `60` (entre 1 y 1440) |

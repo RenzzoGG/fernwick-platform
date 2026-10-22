@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     # Sin valor por defecto: si falta, la API falla al arrancar con un error claro
     database_url: str
+    # URL del rol dueño de las tablas, solo para Alembic y seed-demo (en Railway, el usuario
+    # postgres). Opcional: en local el dueño es el mismo usuario de DATABASE_URL.
+    migrations_database_url: str | None = None
     # Solo para pytest; opcional para que la API arranque sin ella (p. ej. en Railway)
     test_database_url: str | None = None
     # Orígenes (páginas web) que pueden llamar a la API desde el navegador.
@@ -40,7 +43,7 @@ class Settings(BaseSettings):
     # Endpoint /v1/auth/demo. Apagado por defecto: hay que activarlo a propósito.
     demo_enabled: bool = False
 
-    @field_validator("database_url", "test_database_url")
+    @field_validator("database_url", "migrations_database_url", "test_database_url")
     @classmethod
     def usar_driver_psycopg(cls, value: str | None) -> str | None:
         # Railway entrega "postgresql://..."; SQLAlchemy usaría psycopg2 (no instalado).
@@ -83,6 +86,11 @@ class Settings(BaseSettings):
                 'python -c "import secrets; print(secrets.token_urlsafe(48))"'
             )
         return value
+
+    @property
+    def owner_database_url(self) -> str:
+        """URL para migraciones y seed: el dueño si está configurado; si no, DATABASE_URL."""
+        return self.migrations_database_url or self.database_url
 
     @property
     def is_production(self) -> bool:
