@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -49,7 +49,9 @@ def test_cotizacion_valida_se_guarda(client, db_session):
     # El servidor fija estos valores
     assert quote.status == "new" and quote.status in QUOTE_STATUSES
     assert quote.is_demo is False
-    assert quote.created_at.isoformat() == body["created_at"].replace("Z", "+00:00")
+    # Mismo instante que en la base, expresado en UTC
+    assert body["created_at"].endswith("Z")
+    assert datetime.fromisoformat(body["created_at"]) == quote.created_at
 
 
 def test_message_es_opcional_y_vacio_se_guarda_como_null(client, db_session):
@@ -159,11 +161,19 @@ def test_campos_prohibidos_dan_422(client, db_session, campo, valor):
 
 
 def test_honeypot_lleno_responde_201_pero_no_guarda(client, db_session):
-    response = client.post(URL, json=payload(website="https://spam.example"))
+    real = client.post(URL, json=payload()).json()
+    bot = client.post(URL, json=payload(website="https://spam.example"))
+    siguiente = client.post(URL, json=payload()).json()
 
-    assert response.status_code == 201
-    assert set(response.json()) == {"id", "created_at"}  # misma forma que un éxito real
-    assert quotes_count(db_session) == 0
+    assert bot.status_code == 201
+    falsa = bot.json()
+    # Indistinguible de una real: mismas claves, id de la misma secuencia, fecha en UTC
+    assert set(falsa) == {"id", "created_at"}
+    assert real["id"] < falsa["id"] < siguiente["id"]
+    assert falsa["created_at"].endswith("Z") and real["created_at"].endswith("Z")
+    # Pero no se guardó
+    assert db_session.get(Quote, falsa["id"]) is None
+    assert quotes_count(db_session) == 2
 
 
 def test_honeypot_vacio_o_con_espacios_guarda_normal(client, db_session):

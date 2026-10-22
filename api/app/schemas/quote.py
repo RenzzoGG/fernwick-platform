@@ -1,7 +1,7 @@
 """Esquemas Pydantic de las cotizaciones (lo que entra y sale por la API)."""
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -89,3 +89,9 @@ class PublicQuoteCreated(BaseModel):
 
     id: int
     created_at: datetime
+
+    @field_validator("created_at")
+    @classmethod
+    def en_utc(cls, value: datetime) -> datetime:
+        # PostgreSQL devuelve la hora en la zona de la sesión; se responde siempre en UTC ("Z")
+        return value.astimezone(timezone.utc)
