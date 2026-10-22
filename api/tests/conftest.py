@@ -30,6 +30,7 @@ get_settings.cache_clear()
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from psycopg.pq import TransactionStatus  # noqa: E402
 from sqlalchemy import text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
@@ -77,6 +78,11 @@ def db_session() -> Iterator[Session]:
         connection.close()
 
 
+def _transaccion_abortada(session: Session) -> bool:
+    psycopg_conn = session.connection().connection.dbapi_connection
+    return psycopg_conn.info.transaction_status == TransactionStatus.INERROR
+
+
 @pytest.fixture
 def client(db_session: Session) -> Iterator[TestClient]:
     # Las rutas usan la misma sesión que la prueba: sus commit() solo cierran un SAVEPOINT,
@@ -89,8 +95,13 @@ def client(db_session: Session) -> Iterator[TestClient]:
         try:
             yield db_session
         finally:
-            # De vuelta al dueño para que la prueba pueda revisar o preparar datos sin RLS
             db_session.info.pop(ROLE_KEY, None)
+            # Si la petición terminó con un error de la base (p. ej. permiso denegado), la
+            # transacción quedó abortada: se revierte lo no confirmado, como al cerrar get_db.
+            # is_active es False si falló un flush; INERROR, si falló una consulta.
+            if not db_session.is_active or _transaccion_abortada(db_session):
+                db_session.rollback()
+            # De vuelta al dueño para que la prueba pueda revisar o preparar datos sin RLS
             db_session.execute(text("RESET ROLE"))
 
     app.dependency_overrides[get_db] = override_get_db
