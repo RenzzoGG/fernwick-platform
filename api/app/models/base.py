@@ -31,6 +31,14 @@ QUOTE_STATUSES = ("new", "contacted", "scheduled", "closed")
 SERVICES = ("standard", "recurring", "deep", "move", "office", "post-renovation")
 HOME_SIZES = ("studio", "2-bed", "3-bed", "4-bed", "office")
 
+# Límites de longitud de las cotizaciones: los usan las columnas/CHECK de la base y Pydantic
+NAME_MIN = 2
+NAME_MAX = 100
+EMAIL_MAX = 254  # máximo práctico de una dirección de email (RFC 5321)
+PHONE_MAX = 30
+PHONE_MIN_DIGITS = 10
+MESSAGE_MAX = 500
+
 # Formato mínimo de email: algo@algo, sin espacios. Rechaza también el texto vacío.
 # La validación completa (dominio, etc.) la hará Pydantic; la base solo impide basura evidente.
 EMAIL_CHECK = "{column} ~ '^[^@[:space:]]+@[^@[:space:]]+$'"

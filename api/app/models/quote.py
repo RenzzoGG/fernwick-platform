@@ -14,7 +14,20 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import EMAIL_CHECK, HOME_SIZES, QUOTE_STATUSES, SERVICES, Base, sql_in
+from app.models.base import (
+    EMAIL_CHECK,
+    EMAIL_MAX,
+    HOME_SIZES,
+    MESSAGE_MAX,
+    NAME_MAX,
+    NAME_MIN,
+    PHONE_MAX,
+    PHONE_MIN_DIGITS,
+    QUOTE_STATUSES,
+    SERVICES,
+    Base,
+    sql_in,
+)
 
 if TYPE_CHECKING:
     from app.models.note import QuoteNote
@@ -26,11 +39,12 @@ class Quote(Base):
 
     __tablename__ = "quotes"
     __table_args__ = (
-        CheckConstraint("char_length(btrim(name)) >= 2", name="name_longitud"),
+        CheckConstraint(f"char_length(btrim(name)) >= {NAME_MIN}", name="name_longitud"),
         CheckConstraint(EMAIL_CHECK.format(column="email"), name="email_formato"),
         # Al menos 10 dígitos, ignorando espacios, guiones y paréntesis
         CheckConstraint(
-            r"char_length(regexp_replace(phone, '\D', '', 'g')) >= 10", name="phone_digitos"
+            rf"char_length(regexp_replace(phone, '\D', '', 'g')) >= {PHONE_MIN_DIGITS}",
+            name="phone_digitos",
         ),
         CheckConstraint(sql_in("service", SERVICES), name="service_valido"),
         CheckConstraint(sql_in("home_size", HOME_SIZES), name="home_size_valido"),
@@ -43,13 +57,13 @@ class Quote(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
-    name: Mapped[str] = mapped_column(String(100))
-    email: Mapped[str] = mapped_column(String(254))
-    phone: Mapped[str] = mapped_column(String(30))
+    name: Mapped[str] = mapped_column(String(NAME_MAX))
+    email: Mapped[str] = mapped_column(String(EMAIL_MAX))
+    phone: Mapped[str] = mapped_column(String(PHONE_MAX))
     service: Mapped[str] = mapped_column(Text)
     home_size: Mapped[str] = mapped_column(Text)
     preferred_date: Mapped[date]
-    message: Mapped[str | None] = mapped_column(String(500))
+    message: Mapped[str | None] = mapped_column(String(MESSAGE_MAX))
     # default (Python) y server_default (SQL): el valor se conoce en el objeto antes de
     # guardarlo, y la base lo garantiza aunque alguien inserte con SQL directo
     status: Mapped[str] = mapped_column(Text, default="new", server_default="new")
