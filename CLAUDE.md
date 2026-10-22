@@ -41,6 +41,7 @@ Reglas de trabajo para este repositorio.
 - Los archivos `.env` están en `.gitignore` y **no se commitean**. Solo se versionan los `.env.example`, con los nombres de las variables y valores de ejemplo.
 - Antes de cada commit revisa `git status` y `git diff --staged` para confirmar que no va ningún secreto.
 - No escribas secretos en el código, en migraciones, en tests ni en logs. Toda la configuración se lee de variables de entorno.
+- **Nunca** leas ni uses secretos del `.env` (`JWT_SECRET`, contraseñas, etc.) para generar tokens o hacerte pasar por un usuario. Para probar como admin, crea un admin de prueba en `fernwick_test` o usa los fixtures de las pruebas. Si hace falta probar contra la base `fernwick` con mi usuario, pídeme que lo haga yo.
 
 ## Reporte al terminar cada tarea
 
