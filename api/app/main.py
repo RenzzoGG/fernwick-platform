@@ -4,10 +4,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.logging_config import configure_logging
 from app.middleware import BodySizeLimitMiddleware
 from app.routers import health, public
 
 settings = get_settings()
+configure_logging(settings.environment)
 
 # Una cotización legítima ocupa < 2 KB; 10 KB deja margen y frena cuerpos gigantes
 MAX_BODY_BYTES = 10 * 1024

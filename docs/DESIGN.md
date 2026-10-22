@@ -390,6 +390,7 @@ Detalles de comportamiento:
 - Driver de PostgreSQL: **psycopg 3** (`postgresql+psycopg://`). Railway entrega URLs `postgresql://…`; `config.py` las normaliza.
 - En desarrollo local la conexión va por **socket Unix** con autenticación *peer* (sin contraseña): `postgresql+psycopg://renzzo@/fernwick?host=/var/run/postgresql`. Por TCP (`localhost:5432`) el PostgreSQL local exige contraseña.
 - Errores 500 sin trazas en producción (solo un id de error; el detalle va a los logs de Railway). Los logs nunca incluyen contraseñas, tokens ni el cuerpo completo de las cotizaciones.
+- **Logs** (`app/logging_config.py`, llamado desde `main.py`): se configura solo el logger `app` (todos los `logging.getLogger(__name__)` de `app.*` heredan de él), con un handler a stderr y `propagate=False`. Nivel según `ENVIRONMENT`: `DEBUG` en `development`, `INFO` en `test` y `production` (así el aviso del honeypot y los logins fallidos llegan a los logs de Railway). No se usa `logging.basicConfig` en el logger raíz: con la raíz en `INFO`, SQLAlchemy imprimiría cada consulta SQL. Uvicorn y Alembic configuran sus propios loggers.
 
 ### 5.7 Otros
 
