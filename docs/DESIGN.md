@@ -363,7 +363,7 @@ Detalles de comportamiento:
   - Se guarda **en memoria**: suficiente con una sola instancia de la API. Si se escala a varias, hace falta Redis (§9).
 - **IP real detrás del proxy**: en Railway todas las peticiones llegan desde su proxy, así que la IP del cliente viene en `X-Forwarded-For`. Uvicorn se ejecuta con `--proxy-headers --forwarded-allow-ips="*"` (solo el proxy de Railway puede hablar con el contenedor). El header lo puede falsificar el cliente en su parte izquierda, así que en la fase 10 (despliegue) se verifica qué entrada agrega Railway y se usa esa.
 - **Validación** con Pydantic: longitudes (nombre 2–100, mensaje ≤ 500), `EmailStr`, teléfono con ≥ 10 dígitos, `service`/`size` como `Literal[...]`, fecha ≥ hoy en `BUSINESS_TIMEZONE`, recorte de espacios, `extra="forbid"` para rechazar campos desconocidos.
-- **Tamaño del cuerpo**: un middleware rechaza con 413 los cuerpos de más de 16 KB (una cotización legítima ocupa < 2 KB).
+- **Tamaño del cuerpo**: un middleware ASGI propio (`app/middleware.py`) rechaza con 413 los cuerpos de más de **10 KB** (una cotización legítima ocupa < 2 KB). Si llega `Content-Length`, responde sin leer el cuerpo. Si no llega (envío por partes, *chunked*) o miente, cuenta los bytes mientras se leen y corta al pasarse. Va por dentro de CORS para que el 413 también lleve los headers CORS y la landing pueda leerlo.
 - Si el honeypot y el límite no bastan, el siguiente paso es Cloudflare Turnstile (§9).
 
 ### 5.6 Secretos y configuración
@@ -402,7 +402,8 @@ Detalles de comportamiento:
 fernwick-platform/
 ├── api/
 │   ├── app/
-│   │   ├── main.py            # Crea la app FastAPI, middlewares (CORS, tamaño, rate limit), incluye routers
+│   │   ├── main.py            # Crea la app FastAPI, middlewares (CORS, tamaño), incluye routers
+│   │   ├── middleware.py      # Límite de tamaño del cuerpo (413)
 │   │   ├── config.py          # Settings con pydantic-settings
 │   │   ├── db.py              # Engine, sessionmaker, sesión por petición y SET LOCAL ROLE
 │   │   ├── security.py        # Hash de contraseñas (pwdlib) y JWT (PyJWT)

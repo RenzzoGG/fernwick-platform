@@ -4,9 +4,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
+from app.middleware import BodySizeLimitMiddleware
 from app.routers import health
 
 settings = get_settings()
+
+# Una cotización legítima ocupa < 2 KB; 10 KB deja margen y frena cuerpos gigantes
+MAX_BODY_BYTES = 10 * 1024
 
 app = FastAPI(
     title="Fernwick API",
@@ -16,6 +20,10 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None if settings.is_production else "/openapi.json",
 )
+
+# Orden: el último middleware agregado es la capa más externa. CORS va por fuera para que
+# también las respuestas 413 lleven sus headers (si no, el navegador las vería como error de red).
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_BODY_BYTES)
 
 # CORS: le dice al navegador qué páginas pueden leer las respuestas de la API.
 # No es autenticación (curl lo ignora); solo evita que otras webs usen la API desde el navegador.
