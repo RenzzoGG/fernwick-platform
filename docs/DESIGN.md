@@ -349,6 +349,7 @@ Detalles de comportamiento:
 
 - `CORSMiddleware` con lista blanca en `CORS_ORIGINS`: en producción `https://fernwick.renzzogg.com` y `https://fernwick-admin.renzzogg.com`; en desarrollo `http://localhost:8000` (landing) y `http://localhost:5173` (Vite).
 - Métodos `GET, POST, PATCH, OPTIONS`; headers `Authorization, Content-Type`; `allow_credentials=False` (no usamos cookies).
+- `CORS_ORIGINS` se lee como texto separado por comas (`NoDecode` de pydantic-settings, para que no se interprete como JSON). Si falta, la lista queda **vacía**, es decir, ningún origen permitido, que es lo seguro. `config.py` **rechaza `*`** al arrancar.
 - **CORS no es autenticación.** Solo le dice al *navegador* qué páginas pueden leer las respuestas. Un script con `curl` ignora CORS por completo; por eso las rutas privadas exigen JWT y la pública tiene honeypot y límite de solicitudes.
 
 ### 5.5 Protección contra spam y abuso
@@ -378,7 +379,7 @@ Detalles de comportamiento:
 | `TEST_DATABASE_URL` | api (solo local) | sí | Base de pruebas; su nombre **debe** terminar en `_test` (las pruebas la vacían) |
 | `JWT_SECRET` | api | sí | ≥ 32 bytes aleatorios |
 | `JWT_EXPIRE_MINUTES` | api | no | `60` |
-| `CORS_ORIGINS` | api | no | lista separada por comas |
+| `CORS_ORIGINS` | api | no | lista separada por comas (vacía = ninguno; `*` no se admite) |
 | `DEMO_ENABLED` | api | no | `true` / `false` |
 | `BUSINESS_TIMEZONE` | api | no | `America/New_York` (zona del negocio ficticio) |
 | `ENVIRONMENT` | api | no | `development` / `production` (activa `/docs`, nivel de logs) |
