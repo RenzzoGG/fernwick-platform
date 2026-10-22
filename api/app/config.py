@@ -4,8 +4,10 @@ from functools import lru_cache
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+JWT_SECRET_MIN_BYTES = 32
 
 
 class Settings(BaseSettings):
@@ -29,6 +31,14 @@ class Settings(BaseSettings):
     #   cf-connecting-ip -> el encabezado que pone Cloudflare (producción)
     # Solo se confía en un encabezado si se indica aquí: si no, cualquiera podría inventar su IP.
     client_ip_header: Literal["none", "x-forwarded-for", "cf-connecting-ip"] = "none"
+
+    # Clave con la que se firman los JWT. Obligatoria. SecretStr: al imprimir la configuración
+    # (o si aparece en un error) se muestra '**********' en vez del valor.
+    jwt_secret: SecretStr
+    # Duración de un token: entre 1 minuto y 1 día
+    jwt_expire_minutes: int = Field(default=60, ge=1, le=24 * 60)
+    # Endpoint /v1/auth/demo. Apagado por defecto: hay que activarlo a propósito.
+    demo_enabled: bool = False
 
     @field_validator("database_url", "test_database_url")
     @classmethod
@@ -61,6 +71,17 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except (ZoneInfoNotFoundError, ValueError):
             raise ValueError(f"BUSINESS_TIMEZONE desconocida: {value!r}") from None
+        return value
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def secreto_suficientemente_largo(cls, value: SecretStr) -> SecretStr:
+        # HS256 usa una clave de 256 bits: un secreto más corto se puede adivinar por fuerza bruta
+        if len(value.get_secret_value().encode()) < JWT_SECRET_MIN_BYTES:
+            raise ValueError(
+                f"JWT_SECRET debe tener al menos {JWT_SECRET_MIN_BYTES} bytes. Genera uno con: "
+                'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
         return value
 
     @property

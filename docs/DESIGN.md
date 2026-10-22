@@ -324,12 +324,16 @@ Detalles de comportamiento:
 
 - **Argon2id** mediante la librería `pwdlib`. Argon2id es el algoritmo recomendado hoy por OWASP: es lento a propósito y usa mucha memoria, lo que encarece los ataques de fuerza bruta con GPU. Se usa `pwdlib` porque `passlib` (el clásico de los tutoriales de FastAPI) está sin mantenimiento.
 - Nunca se guarda ni se registra (logs) la contraseña en texto plano. El hash incluye la sal y los parámetros.
-- Si el email no existe, **igual** se verifica contra un hash falso para que el tiempo de respuesta no revele qué emails son válidos; el mensaje es siempre "Email o contraseña incorrectos".
+- Si el email no existe, **igual** se verifica contra un hash falso para que el tiempo de respuesta no revele qué emails son válidos. Lo mismo pasa con un hash que no se reconoce (el `'!'` del demo): da `False` sin lanzar error y gasta el mismo tiempo. El mensaje es siempre el mismo (`"Incorrect email or password."`, en inglés como el resto de la API).
+- `PasswordHash.recommended()`: Argon2id con los parámetros por defecto de argon2-cffi (`m=65536` KiB, `t=3`, `p=4`). El login usa `verify_and_update`: si algún día se suben los parámetros, el hash viejo se reemplaza por uno nuevo la próxima vez que el usuario entra, sin pedirle que cambie la contraseña.
+- Código en `app/security.py`.
 
 ### 5.2 Autenticación con JWT
 
 - Librería **PyJWT**, algoritmo **HS256**, secreto aleatorio de ≥ 32 bytes en `JWT_SECRET` (`python -c "import secrets; print(secrets.token_urlsafe(48))"`).
-- Contenido del token: `sub` (id del usuario), `role`, `iat`, `exp`. Duración: **60 minutos** (`JWT_EXPIRE_MINUTES`). Al vencer, el panel vuelve al login. Sin *refresh tokens* en v1 (más simple; ver §9).
+- `config.py` rechaza al arrancar un `JWT_SECRET` de menos de 32 bytes, y lo guarda como `SecretStr` para que no aparezca si se imprime la configuración.
+- Al decodificar se fija `algorithms=["HS256"]`, así se rechazan los tokens con `"alg": "none"` (sin firma) o con otro algoritmo. Además se exigen `sub`, `role`, `iat` y `exp`. Cualquier falla (firma, vencimiento, formato, `sub` que no es número) responde **401** con `WWW-Authenticate: Bearer` y el mismo mensaje.
+- Contenido del token: `sub` (id del usuario, como texto: el estándar lo exige), `role`, `iat`, `exp`. Duración: **60 minutos** (`JWT_EXPIRE_MINUTES`). Al vencer, el panel vuelve al login. Sin *refresh tokens* en v1 (más simple; ver §9).
 - En **cada** petición la API decodifica el token, verifica la firma y `exp`, y **vuelve a cargar al usuario desde la base**: si se desactivó (`is_active = false`) o cambió de rol, el token deja de servir de inmediato. El rol que manda es el de la base; el del token solo lo usa el panel para pintar la interfaz.
 - El panel envía el token en el header `Authorization: Bearer …` y lo guarda en memoria + `sessionStorage` (se pierde al cerrar la pestaña).
   - *Trade-off:* una cookie `httpOnly` protege mejor ante XSS (JavaScript no puede leerla), pero obliga a manejar CSRF y cookies entre subdominios. Para un panel con un solo administrador, sin HTML de usuarios renderizado sin escapar (React escapa por defecto) y con tokens de 60 minutos, el header es más simple y suficiente. Queda anotado en §9.
@@ -388,9 +392,9 @@ Detalles de comportamiento:
 | `MIGRATIONS_DATABASE_URL` | api | sí | Desde la fase 6: URL del rol dueño, solo para Alembic y el seed |
 | `TEST_DATABASE_URL` | api (solo local) | sí | Base de pruebas; su nombre **debe** terminar en `_test` (las pruebas la vacían) |
 | `JWT_SECRET` | api | sí | ≥ 32 bytes aleatorios |
-| `JWT_EXPIRE_MINUTES` | api | no | `60` |
+| `JWT_EXPIRE_MINUTES` | api | no | `60` (entre 1 y 1440) |
 | `CORS_ORIGINS` | api | no | lista separada por comas (vacía = ninguno; `*` no se admite) |
-| `DEMO_ENABLED` | api | no | `true` / `false` |
+| `DEMO_ENABLED` | api | no | `true` / `false` (por defecto `false`: el demo se activa a propósito) |
 | `BUSINESS_TIMEZONE` | api | no | `America/New_York` (zona del negocio ficticio) |
 | `ENVIRONMENT` | api | no | `development` / `production` (activa `/docs`, nivel de logs) |
 | `CLIENT_IP_HEADER` | api | no | `none` (desarrollo) / `x-forwarded-for` / `cf-connecting-ip` (producción). De dónde sale la IP del visitante (§5.5) |

@@ -1,4 +1,5 @@
 import os
+import secrets
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -20,6 +21,10 @@ os.environ["DATABASE_URL"] = _test_url
 os.environ["CORS_ORIGINS"] = "http://localhost:8000,http://localhost:5173"
 # Sin confiar en encabezados de proxy, como en desarrollo (test_client_ip.py prueba los otros modos)
 os.environ["CLIENT_IP_HEADER"] = "none"
+# Secreto aleatorio en cada ejecución: las pruebas no dependen del .env ni guardan ningún secreto
+os.environ["JWT_SECRET"] = secrets.token_urlsafe(48)
+os.environ["JWT_EXPIRE_MINUTES"] = "60"
+os.environ["DEMO_ENABLED"] = "true"
 get_settings.cache_clear()
 
 from alembic import command  # noqa: E402
