@@ -34,6 +34,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db import engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.routers.auth import demo_limiter, login_limiter  # noqa: E402
 from app.routers.public import quote_limiter  # noqa: E402
 
 API_DIR = Path(__file__).resolve().parent.parent
@@ -87,3 +88,5 @@ def client(db_session: Session) -> Iterator[TestClient]:
 def reset_rate_limits() -> None:
     # El limitador vive en memoria del proceso: sin esto, una prueba agotaría el cupo de la siguiente
     quote_limiter.reset()
+    login_limiter.reset()
+    demo_limiter.reset()

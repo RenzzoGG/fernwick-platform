@@ -288,8 +288,8 @@ Convenciones:
 |---|---|---|---|---|---|
 | GET | `/health` | público | — | `200 {"status":"ok","db":"ok"}` | 503 si no hay base |
 | POST | `/v1/public/quotes` | público | `{name, email, phone, service, home_size, preferred_date, message?, website?}` | `201 {"id", "created_at"}` | 422, 413, 429 |
-| POST | `/v1/auth/login` | público | `{email, password}` | `200 {"access_token", "token_type":"bearer", "expires_in", "role"}` | 401, 429 |
-| POST | `/v1/auth/demo` | público (si `DEMO_ENABLED`) | — | igual que login, `role: "demo"` | 404 si está desactivado, 429 |
+| POST | `/v1/auth/login` | público | `{email, password}` | `200 {"access_token", "token_type":"bearer", "expires_in", "role"}` | 401, 422, 429 |
+| POST | `/v1/auth/demo` | público (si `DEMO_ENABLED`) | — | igual que login, `role: "demo"` | 404 si está desactivado o falta el usuario demo, 429 |
 | GET | `/v1/auth/me` | admin, demo | — | `200 {"id", "email", "role"}` | 401 |
 | GET | `/v1/quotes` | admin, demo | query: `status?`, `q?`, `page=1`, `page_size=20` (máx. 100), `sort=-created_at` | `200 {"items":[QuoteSummary], "total", "page", "page_size"}` | 401, 422 |
 | GET | `/v1/quotes/{id}` | admin, demo | — | `200 QuoteDetail` (con `notes` e `status_history`) | 401, 404 |
@@ -345,8 +345,9 @@ Detalles de comportamiento:
 | Ver lista, detalle, métricas | ✅ datos reales | ✅ solo datos ficticios |
 | Cambiar estado, agregar notas | ✅ | ❌ 403 |
 
-- Implementado con dependencias de FastAPI: `current_user = Depends(get_current_user)` y `Depends(require_role("admin"))` en las rutas de escritura.
-- **Cuenta demo**: `POST /v1/auth/demo` entrega un token del usuario demo **sin contraseña**. Ventaja frente a publicar "usuario: demo / clave: demo123": no existe ninguna contraseña que pueda filtrarse o reutilizarse, y se apaga con `DEMO_ENABLED=false`. Tiene su propio límite de solicitudes. El panel muestra un botón "Ver demo" en el login y un banner permanente "Modo demo — datos ficticios"; los botones de edición se ocultan (la seguridad real está en la API y en la base, la interfaz solo es cortesía).
+- Implementado con dependencias de FastAPI en `app/deps.py`: `user: Annotated[User, Depends(get_current_user)]` en toda ruta privada, y `Depends(require_role("admin"))` en las de escritura (responde **403**: se sabe quién es, pero no tiene permiso). `get_current_user` lee el token con `HTTPBearer(auto_error=False)`, que además agrega el botón *Authorize* en `/docs`. Todos los 401 llevan el mismo mensaje (`"Could not validate credentials."`) y no dicen qué falló.
+- **Login** (`routers/auth.py` → `services/auth.py`): cuerpo JSON `{email, password}` con `extra="forbid"`. El email se recorta y se busca con `lower(email)`; la contraseña no se recorta. Email inexistente, contraseña incorrecta, usuario inactivo o usuario demo responden **el mismo 401**. Si sale bien, guarda `last_login_at`. Los logs dicen "Login fallido" o "Login correcto: usuario N", nunca el email ni la contraseña.
+- **Cuenta demo**: `POST /v1/auth/demo` entrega un token del usuario demo **sin contraseña**. Ventaja frente a publicar "usuario: demo / clave: demo123": no existe ninguna contraseña que pueda filtrarse o reutilizarse, y se apaga con `DEMO_ENABLED=false`. Tiene su propio límite de solicitudes. Si falta el usuario demo (no se corrió `seed-demo`), también responde 404 y deja un `warning` en los logs. El panel muestra un botón "Ver demo" en el login y un banner permanente "Modo demo — datos ficticios"; los botones de edición se ocultan (la seguridad real está en la API y en la base, la interfaz solo es cortesía).
 - **Admin inicial**: se crea por consola con `python -m app.cli create-admin --email …`. La contraseña se pide dos veces con `getpass`, sin mostrarla; no va como argumento, porque quedaría en el historial y en la lista de procesos. Debe tener entre 12 y 128 caracteres (el tope evita hashear textos gigantes). El email se valida con `email-validator` y, si ya existe (sin distinguir mayúsculas), el comando termina con error y no cambia nada. La lógica está en `services/auth.py` (`create_admin`), que se prueba sin consola. No se crea desde variables de entorno para no dejar una contraseña de admin guardada en Railway.
 
 ### 5.4 CORS
@@ -422,13 +423,14 @@ fernwick-platform/
 │   │   ├── middleware.py      # Límite de tamaño del cuerpo (413)
 │   │   ├── rate_limit.py      # Límite de solicitudes por IP en memoria (429)
 │   │   ├── config.py          # Settings con pydantic-settings
+│   │   ├── logging_config.py  # Logger "app" según ENVIRONMENT
 │   │   ├── db.py              # Engine, sessionmaker, sesión por petición y SET LOCAL ROLE
 │   │   ├── security.py        # Hash de contraseñas (pwdlib) y JWT (PyJWT)
 │   │   ├── deps.py            # get_current_user, require_role, get_db_for_user
 │   │   ├── models/            # Modelos SQLAlchemy 2.0 (Mapped[...]): base.py, user.py, quote.py, note.py, status_change.py
 │   │   ├── schemas/           # Esquemas Pydantic de entrada/salida
 │   │   ├── routers/           # health.py, public.py, auth.py, quotes.py, metrics.py
-│   │   ├── services/          # Lógica de negocio y consultas (quotes.py, metrics.py)
+│   │   ├── services/          # Lógica de negocio y consultas (quotes.py, auth.py, metrics.py)
 │   │   └── cli.py             # create-admin, seed-demo
 │   ├── alembic/
 │   │   ├── env.py
