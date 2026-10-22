@@ -67,16 +67,21 @@ def _search_condition(q: str) -> ColumnElement[bool]:
     return or_(*branches)
 
 
-def list_quotes(
-    session: Session, viewer: User, params: QuoteListParams
-) -> tuple[list[Quote], int]:
-    """Una página de cotizaciones visibles para `viewer`, y el total que cumple los filtros."""
+def list_conditions(viewer: User, params: QuoteListParams) -> list[ColumnElement[bool]]:
+    """Condiciones del WHERE de la lista. El alcance del usuario va siempre, primero."""
     conditions = [_visible_to(viewer)]
     if params.status is not None:
         conditions.append(Quote.status == params.status)
     if params.q is not None:
         conditions.append(_search_condition(params.q))
+    return conditions
 
+
+def list_quotes(
+    session: Session, viewer: User, params: QuoteListParams
+) -> tuple[list[Quote], int]:
+    """Una página de cotizaciones visibles para `viewer`, y el total que cumple los filtros."""
+    conditions = list_conditions(viewer, params)
     total = session.scalar(select(func.count()).select_from(Quote).where(*conditions))
     items = session.scalars(
         select(Quote)

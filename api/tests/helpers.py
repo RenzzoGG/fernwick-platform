@@ -1,7 +1,8 @@
 """Funciones de apoyo compartidas por las pruebas (las fixtures están en conftest.py)."""
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from itertools import count
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -17,6 +18,12 @@ _numeros = count(1)
 def bearer(user: User, **kwargs) -> dict[str, str]:
     token = create_access_token(user.id, user.role, get_settings(), **kwargs)
     return {"Authorization": f"Bearer {token}"}
+
+
+def local(day: date, hour: int = 12, minute: int = 0) -> datetime:
+    """Un instante del día dado en la zona del negocio (con zona: se guarda como UTC)."""
+    tz = ZoneInfo(get_settings().business_timezone)
+    return datetime.combine(day, time(hour, minute), tzinfo=tz)
 
 
 def make_quote(session: Session, **overrides) -> Quote:

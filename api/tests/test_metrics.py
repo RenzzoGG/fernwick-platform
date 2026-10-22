@@ -1,20 +1,12 @@
-from datetime import date, datetime, time, timedelta
-from zoneinfo import ZoneInfo
+from datetime import date, timedelta
 
-from app.config import get_settings
 from app.models.base import QUOTE_STATUSES, SERVICES
 from app.schemas.quote import business_today
 from app.services.metrics import metrics_summary
-from tests.helpers import bearer, make_quote
+from tests.helpers import bearer, local, make_quote
 
 URL = "/v1/metrics/summary"
 HOY = date(2026, 10, 21)
-
-
-def local(day: date, hour: int = 12, minute: int = 0) -> datetime:
-    """Un instante del día dado en la zona del negocio (con zona: se guarda como UTC)."""
-    tz = ZoneInfo(get_settings().business_timezone)
-    return datetime.combine(day, time(hour, minute), tzinfo=tz)
 
 
 def por_dia(summary) -> dict[date, int]:
