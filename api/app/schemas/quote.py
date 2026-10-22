@@ -2,10 +2,10 @@
 
 import re
 from datetime import date, datetime, timedelta, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.config import get_settings
 from app.models.base import (
@@ -16,6 +16,7 @@ from app.models.base import (
     NAME_MIN,
     PHONE_MAX,
     PHONE_MIN_DIGITS,
+    QUOTE_STATUSES,
     SERVICES,
 )
 
@@ -23,6 +24,25 @@ from app.models.base import (
 MAX_DAYS_AHEAD = 365
 # Teléfono: solo dígitos, espacios y los símbolos habituales: +1 (212) 555-0100, 212.555.0100
 PHONE_CHARS = re.compile(r"^[0-9+().\- ]+$")
+
+# Lista del panel: tamaño de página máximo y página máxima (evita OFFSET gigantes)
+PAGE_SIZE_MAX = 100
+PAGE_MAX = 10_000
+SEARCH_MIN = 2
+SEARCH_MAX = 100
+
+QuoteStatus = Literal[*QUOTE_STATUSES]
+# Lista cerrada de órdenes permitidos: "-" = descendente. Cualquier otro valor da 422.
+QuoteSort = Literal["created_at", "-created_at", "preferred_date", "-preferred_date"]
+
+
+def _a_utc(value: datetime) -> datetime:
+    # PostgreSQL devuelve la hora en la zona de la sesión; se responde siempre en UTC ("Z")
+    return value.astimezone(timezone.utc)
+
+
+# Tipo para toda fecha-hora de las respuestas: Annotated agrega el validador al tipo
+UtcDatetime = Annotated[datetime, AfterValidator(_a_utc)]
 
 
 def business_today() -> date:
@@ -88,10 +108,51 @@ class PublicQuoteCreated(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    created_at: datetime
+    created_at: UtcDatetime
 
-    @field_validator("created_at")
+
+# --- Panel de administración ---
+
+
+class QuoteListParams(BaseModel):
+    """Parámetros de GET /v1/quotes (van en la URL: ?status=new&q=ana&page=2)."""
+
+    # extra="forbid": un parámetro desconocido (p. ej. ?order_by=password_hash) da 422
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    status: QuoteStatus | None = None
+    q: str | None = Field(default=None, min_length=SEARCH_MIN, max_length=SEARCH_MAX)
+    page: int = Field(default=1, ge=1, le=PAGE_MAX)
+    page_size: int = Field(default=20, ge=1, le=PAGE_SIZE_MAX)
+    sort: QuoteSort = "-created_at"
+
+    @field_validator("q", mode="before")
     @classmethod
-    def en_utc(cls, value: datetime) -> datetime:
-        # PostgreSQL devuelve la hora en la zona de la sesión; se responde siempre en UTC ("Z")
-        return value.astimezone(timezone.utc)
+    def busqueda_vacia_es_none(cls, value: str | None) -> str | None:
+        # El panel puede mandar ?q= con la caja de búsqueda vacía: equivale a no buscar
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+
+class QuoteSummary(BaseModel):
+    """Una fila de la lista del panel."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    email: str
+    phone: str
+    service: str
+    home_size: str
+    preferred_date: date
+    status: str
+    created_at: UtcDatetime
+
+
+class QuotePage(BaseModel):
+    items: list[QuoteSummary]
+    total: int  # filas que cumplen los filtros, en todas las páginas
+    page: int
+    page_size: int

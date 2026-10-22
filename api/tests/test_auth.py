@@ -6,38 +6,16 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
-from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
 from app.deps import require_role
 from app.models import User
 from app.models.user import DEMO_EMAIL
-from app.security import create_access_token
-from app.services.auth import create_admin
+from tests.helpers import CLAVE, bearer
 
-CLAVE = "una clave bastante larga"
 LOGIN_FALLIDO = {"detail": "Incorrect email or password."}
 NO_AUTENTICADO = {"detail": "Could not validate credentials."}
-
-
-@pytest.fixture
-def admin(db_session: Session) -> User:
-    return create_admin(db_session, "admin@example.com", CLAVE)
-
-
-@pytest.fixture
-def demo(db_session: Session) -> User:
-    # Igual que lo crea seed-demo: "!" no es un hash válido, nadie entra con contraseña
-    user = User(email=DEMO_EMAIL, password_hash="!", role="demo")
-    db_session.add(user)
-    db_session.flush()
-    return user
-
-
-def bearer(user: User, **kwargs) -> dict[str, str]:
-    token = create_access_token(user.id, user.role, get_settings(), **kwargs)
-    return {"Authorization": f"Bearer {token}"}
 
 
 def login(client: TestClient, email: str, password: str):

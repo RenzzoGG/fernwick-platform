@@ -34,8 +34,12 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db import engine, get_db  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models import User  # noqa: E402
+from app.models.user import DEMO_EMAIL  # noqa: E402
 from app.routers.auth import demo_limiter, login_limiter  # noqa: E402
 from app.routers.public import quote_limiter  # noqa: E402
+from app.services.auth import create_admin  # noqa: E402
+from tests.helpers import CLAVE  # noqa: E402
 
 API_DIR = Path(__file__).resolve().parent.parent
 
@@ -90,3 +94,17 @@ def reset_rate_limits() -> None:
     quote_limiter.reset()
     login_limiter.reset()
     demo_limiter.reset()
+
+
+@pytest.fixture
+def admin(db_session: Session) -> User:
+    return create_admin(db_session, "admin@example.com", CLAVE)
+
+
+@pytest.fixture
+def demo(db_session: Session) -> User:
+    # Igual que lo crea seed-demo: "!" no es un hash válido, nadie entra con contraseña
+    user = User(email=DEMO_EMAIL, password_hash="!", role="demo")
+    db_session.add(user)
+    db_session.flush()
+    return user
