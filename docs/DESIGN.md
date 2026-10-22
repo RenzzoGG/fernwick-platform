@@ -189,6 +189,7 @@ Así es imposible que una nota "real" quede colgada de una cotización demo o al
 | `quotes (is_demo, status, created_at DESC)` | Lista filtrada por estado y ordenada por fecha (la vista principal del panel). |
 | `quotes (is_demo, created_at)` | Lista sin filtro y métricas de los últimos 30 días. |
 | `quotes USING gin (name gin_trgm_ops)` y `(email gin_trgm_ops)` | Búsqueda `ILIKE '%texto%'` (extensión `pg_trgm`). |
+| `quotes USING gin (regexp_replace(phone, '\D', '', 'g') gin_trgm_ops)` | Búsqueda por dígitos del teléfono (migración `0002`). |
 | `quote_notes (quote_id, created_at)` | Notas de una cotización, en orden. |
 | `quote_status_changes (quote_id, changed_at)` | Historial de una cotización. |
 | único `users (lower(email))` | Login. |
@@ -198,7 +199,7 @@ Notas de aprendizaje:
 - **El orden de columnas en un índice compuesto importa.** `(is_demo, status, created_at DESC)` sirve para `WHERE is_demo = false AND status = 'new' ORDER BY created_at DESC` sin ordenar en memoria. `is_demo` va primero porque **todas las consultas filtran por él** (en la fase 5 lo hace la capa de servicios; desde la fase 6, también la política de RLS).
 - **PostgreSQL no crea índices en las FK automáticamente** (solo en PK y `UNIQUE`). Sin ellos, cada "notas de la cotización 42" y cada `ON DELETE CASCADE` recorrería toda la tabla hija. Los índices `(quote_id, …)` lo resuelven.
 - **¿Por qué trigramas?** Un B-tree normal solo ayuda con `LIKE 'texto%'` (prefijo). Un índice GIN de trigramas parte el texto en grupos de 3 letras y sirve para buscar "en cualquier parte" sin recorrer la tabla. Con pocos cientos de filas PostgreSQL quizá ni lo use (un recorrido secuencial es más barato), y está bien: lo verificaremos con `EXPLAIN ANALYZE` y es la forma correcta de preparar la búsqueda para crecer.
-- El teléfono se busca solo por dígitos (`regexp_replace(phone, '\D', '', 'g')`); con el volumen esperado no necesita índice.
+- El teléfono se busca solo por dígitos (`regexp_replace(phone, '\D', '', 'g')`), y **sí necesita índice** (fase 5, migración `0002`): la búsqueda es `nombre OR email OR teléfono`, y si una rama de un `OR` no tiene índice, PostgreSQL recorre toda la tabla y tampoco usa los índices de nombre y email. Con los tres, el plan es un `BitmapOr`. Es un **índice de expresión** (`regexp_replace` es `IMMUTABLE`, requisito para indexarla): solo se usa si la consulta escribe exactamente la misma expresión, por eso se define una vez (`PHONE_DIGITS` en `models/quote.py`) con las constantes como literales SQL y no como parámetros.
 
 ### 2.5 Migraciones y datos demo
 
@@ -434,7 +435,7 @@ fernwick-platform/
 │   │   └── cli.py             # create-admin, seed-demo
 │   ├── alembic/
 │   │   ├── env.py
-│   │   └── versions/          # Migraciones: 0001 tablas e índices; roles y RLS en la fase 6
+│   │   └── versions/          # Migraciones: 0001 tablas e índices; 0002 índice del teléfono; roles y RLS en la fase 6
 │   ├── tests/                 # pytest: conftest.py (BD fernwick_test), test_*.py
 │   ├── alembic.ini
 │   ├── requirements.txt       # Producción: versiones exactas, incluidas las transitivas

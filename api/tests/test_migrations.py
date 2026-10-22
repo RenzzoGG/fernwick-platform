@@ -28,6 +28,7 @@ def test_upgrade_desde_cero_crea_todo(alembic_config):
         "ix_quotes_is_demo_created_at",
         "ix_quotes_name_trgm",
         "ix_quotes_email_trgm",
+        "ix_quotes_phone_digits_trgm",
         "ix_quote_notes_quote_id_created_at",
         "ix_quote_status_changes_quote_id_changed_at",
     } <= indices

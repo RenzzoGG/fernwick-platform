@@ -11,6 +11,7 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
     func,
+    literal_column,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -91,3 +92,20 @@ class Quote(Base):
 # is_demo va primero porque toda consulta filtra por él.
 Index("ix_quotes_is_demo_status_created_at", Quote.is_demo, Quote.status, Quote.created_at.desc())
 Index("ix_quotes_is_demo_created_at", Quote.is_demo, Quote.created_at)
+
+# Solo los dígitos del teléfono: "(212) 555-0100" -> "2125550100". La búsqueda compara contra
+# esta expresión, y PostgreSQL solo usa un índice de expresión si la consulta escribe
+# EXACTAMENTE la misma; por eso se define una vez y la usan el índice y services/quotes.py.
+# Las constantes van como literales SQL y no como parámetros ($1, $2...): con parámetros, un
+# plan genérico de una sentencia preparada ya no reconocería la expresión del índice.
+PHONE_DIGITS = func.regexp_replace(
+    Quote.phone, literal_column(r"'\D'"), literal_column("''"), literal_column("'g'")
+)
+# GIN de trigramas sobre los dígitos: sin él, el OR de la búsqueda (nombre, email o teléfono)
+# obliga a recorrer toda la tabla y tampoco se aprovechan los índices de nombre y email
+Index(
+    "ix_quotes_phone_digits_trgm",
+    PHONE_DIGITS.label("phone_digits"),
+    postgresql_using="gin",
+    postgresql_ops={"phone_digits": "gin_trgm_ops"},
+)
