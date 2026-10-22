@@ -363,7 +363,15 @@ Detalles de comportamiento:
   - Algoritmo de **ventana deslizante**: por IP se guarda un `deque` con las horas de las solicitudes **aceptadas**. Las rechazadas no se guardan, así la memoria por IP queda acotada al límite mayor y no se castiga más al que insiste. Un `threading.Lock` protege los datos porque las rutas `def` corren en varios hilos. Cada 1000 solicitudes se borran de memoria las IP inactivas.
   - Se aplica como **dependencia** de FastAPI (`Depends(rate_limit(limiter))`). FastAPI resuelve las dependencias antes de validar el cuerpo, así que las solicitudes inválidas (422) también cuentan y un bot no puede tantear gratis. Las rechazadas por tamaño (413) no cuentan: el middleware las corta antes de llegar a la ruta, y ya cuestan casi nada.
   - Se guarda **en memoria**: suficiente con una sola instancia de la API. Si se escala a varias, hace falta Redis (§9).
-- **IP real detrás del proxy**: en Railway todas las peticiones llegan desde su proxy, así que la IP del cliente viene en `X-Forwarded-For`. Uvicorn se ejecuta con `--proxy-headers --forwarded-allow-ips="*"` (solo el proxy de Railway puede hablar con el contenedor). El header lo puede falsificar el cliente en su parte izquierda, así que en la fase 10 (despliegue) se verifica qué entrada agrega Railway y se usa esa.
+- **IP real detrás de los proxies** (`client_ip()` en `app/rate_limit.py`). En producción el camino es visitante → Cloudflare → proxy de Railway → API, así que la conexión TCP que ve la API siempre es la del proxy. Si se usara esa IP, todos los visitantes compartirían un solo cupo. Los encabezados que traen la IP real los puede **inventar** cualquiera que hable directo con la API, así que solo se confía en ellos si lo indica `CLIENT_IP_HEADER`:
+  - `none` (por defecto: desarrollo y pruebas): IP de la conexión; se ignoran los encabezados.
+  - `x-forwarded-for`: la entrada **derecha** de `X-Forwarded-For`, que es la que agregó el último proxy. La izquierda la escribe el cliente y nunca se usa. Sirve solo si hay un proxy delante (Railway sin Cloudflare).
+  - `cf-connecting-ip` (**producción**): el encabezado que pone Cloudflare, que sobrescribe el que mande el cliente. Detrás de Cloudflare, la entrada derecha de `X-Forwarded-For` sería una IP de Cloudflare compartida por miles de visitantes.
+  - Si el encabezado falta o no es una IP válida, se usa la IP de la conexión. La IP se normaliza (`ipaddress`) para que la misma IPv6 escrita de dos formas no tenga dos cupos.
+  - Es una variable con valores fijos y no un booleano "confiar en proxies": un booleano tendría que adivinar el encabezado, y "probar uno y si no el otro" permite elegir la IP a quien llegue sin pasar por Cloudflare.
+  - **Uvicorn corre con `--no-proxy-headers`**, así solo la app decide la IP. Con `--forwarded-allow-ips="*"`, Uvicorn reemplaza la IP por la entrada **izquierda** de `X-Forwarded-For`, que es falsificable. Y sin ninguna opción, confía en ese encabezado cuando la conexión viene de `127.0.0.1`, así que en local un `curl -H 'X-Forwarded-For: …'` cambiaría la IP.
+  - Pendiente para la fase 10: el dominio `*.up.railway.app` llega a la API **sin pasar por Cloudflare**, y por ahí se podría falsificar `CF-Connecting-IP`. Hay que quitarlo en Railway y dejar solo `fernwick-api.renzzogg.com` con el proxy de Cloudflare activo.
+  - Al rechazar una solicitud con 429 se registra un `warning` con la ruta, sin la IP.
 - **Validación** con Pydantic (`schemas/quote.py`): longitudes tomadas de las mismas constantes que la tabla (`models/base.py`: nombre 2–100, email ≤ 254, teléfono ≤ 30, mensaje ≤ 500); `EmailStr` (paquete `email-validator`, sin consultas DNS); teléfono con solo dígitos, espacios y `+ ( ) - .`, y ≥ 10 dígitos; `service`/`home_size` como `Literal[*SERVICES]`/`Literal[*HOME_SIZES]` (sin copiar las listas); fecha entre hoy y hoy + 365 días en `BUSINESS_TIMEZONE` (el tope evita fechas absurdas como 9999-12-31); recorte de espacios (`str_strip_whitespace`); mensaje vacío → `NULL`; `extra="forbid"` para rechazar campos desconocidos. Mensajes de error en inglés, como la landing.
 - **Tamaño del cuerpo**: un middleware ASGI propio (`app/middleware.py`) rechaza con 413 los cuerpos de más de **10 KB** (una cotización legítima ocupa < 2 KB). Si llega `Content-Length`, responde sin leer el cuerpo. Si no llega (envío por partes, *chunked*) o miente, cuenta los bytes mientras se leen y corta al pasarse. Va por dentro de CORS para que el 413 también lleve los headers CORS y la landing pueda leerlo.
 - Si el honeypot y el límite no bastan, el siguiente paso es Cloudflare Turnstile (§9).
@@ -385,6 +393,7 @@ Detalles de comportamiento:
 | `DEMO_ENABLED` | api | no | `true` / `false` |
 | `BUSINESS_TIMEZONE` | api | no | `America/New_York` (zona del negocio ficticio) |
 | `ENVIRONMENT` | api | no | `development` / `production` (activa `/docs`, nivel de logs) |
+| `CLIENT_IP_HEADER` | api | no | `none` (desarrollo) / `x-forwarded-for` / `cf-connecting-ip` (producción). De dónde sale la IP del visitante (§5.5) |
 | `VITE_API_URL` | admin | **no** | `https://fernwick-api.renzzogg.com` — se incrusta en el JS en el build, así que es **pública** por definición |
 
 - Driver de PostgreSQL: **psycopg 3** (`postgresql+psycopg://`). Railway entrega URLs `postgresql://…`; `config.py` las normaliza.
@@ -480,7 +489,7 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 | Servicio | Origen | Configuración |
 |---|---|---|
 | **Postgres** | Plantilla PostgreSQL de Railway | Volumen persistente. Elegir la versión mayor más cercana a la local (PostgreSQL 18) y verificar compatibilidad con `pg_trgm`. |
-| **api** | Este repo, *Root Directory* `api/` | Railpack (Python). Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips="*"`. *Pre-deploy command*: `alembic upgrade head` (si la migración falla, no se publica la versión nueva). *Healthcheck*: `/health`. *Watch paths*: `api/**`. |
+| **api** | Este repo, *Root Directory* `api/` | Railpack (Python). Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers` (la IP real la decide la app según `CLIENT_IP_HEADER`, §5.5). *Pre-deploy command*: `alembic upgrade head` (si la migración falla, no se publica la versión nueva). *Healthcheck*: `/health`. *Watch paths*: `api/**`. |
 | **admin** | Este repo, *Root Directory* `admin/` | Railpack (Node) con `npm ci` + `npm run build`, servido como sitio estático con Caddy: `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci` (igual que la landing). *Watch paths*: `admin/**`. `VITE_API_URL` definida antes del build. |
 
 - **Watch paths** evitan que un cambio solo en `admin/` vuelva a desplegar la API y viceversa.
@@ -488,7 +497,7 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 
 ### 8.2 Variables
 
-- **api**: `MIGRATIONS_DATABASE_URL=${{Postgres.DATABASE_URL}}` (variable de referencia: Railway la mantiene actualizada si cambian credenciales). `DATABASE_URL` se arma a mano con el rol `fernwick_app` y el host interno de Railway (`${{Postgres.PGHOST}}`, `${{Postgres.PGPORT}}`, `${{Postgres.PGDATABASE}}`); el tráfico API ↔ base va por la **red privada** de Railway (sin costo de salida y sin exponer la base a internet). Resto: `JWT_SECRET`, `JWT_EXPIRE_MINUTES`, `CORS_ORIGINS`, `DEMO_ENABLED`, `BUSINESS_TIMEZONE`, `ENVIRONMENT=production`.
+- **api**: `MIGRATIONS_DATABASE_URL=${{Postgres.DATABASE_URL}}` (variable de referencia: Railway la mantiene actualizada si cambian credenciales). `DATABASE_URL` se arma a mano con el rol `fernwick_app` y el host interno de Railway (`${{Postgres.PGHOST}}`, `${{Postgres.PGPORT}}`, `${{Postgres.PGDATABASE}}`); el tráfico API ↔ base va por la **red privada** de Railway (sin costo de salida y sin exponer la base a internet). Resto: `JWT_SECRET`, `JWT_EXPIRE_MINUTES`, `CORS_ORIGINS`, `DEMO_ENABLED`, `BUSINESS_TIMEZONE`, `ENVIRONMENT=production`, `CLIENT_IP_HEADER=cf-connecting-ip`.
 - **admin**: `VITE_API_URL=https://fernwick-api.renzzogg.com`, `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci`.
 
 Primer despliegue (una sola vez): tras la migración, poner la contraseña de `fernwick_app` (`ALTER ROLE` desde `psql` con la URL del dueño), luego `railway run python -m app.cli create-admin` y `railway run python -m app.cli seed-demo`.

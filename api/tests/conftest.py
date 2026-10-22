@@ -18,6 +18,8 @@ if not (make_url(_test_url).database or "").endswith("_test"):
 os.environ["DATABASE_URL"] = _test_url
 # Orígenes fijos para las pruebas: no dependen de lo que tenga cada uno en su .env
 os.environ["CORS_ORIGINS"] = "http://localhost:8000,http://localhost:5173"
+# Sin confiar en encabezados de proxy, como en desarrollo (test_client_ip.py prueba los otros modos)
+os.environ["CLIENT_IP_HEADER"] = "none"
 get_settings.cache_clear()
 
 from alembic import command  # noqa: E402

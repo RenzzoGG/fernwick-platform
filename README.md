@@ -32,9 +32,10 @@ python -m app.cli seed-demo               # (opcional) datos ficticios para la c
 ```bash
 cd api
 source .venv/bin/activate
-uvicorn app.main:app --reload             # --reload reinicia al guardar cambios
+uvicorn app.main:app --reload --no-proxy-headers   # --reload reinicia al guardar cambios
 ```
 
+- `--no-proxy-headers`: Uvicorn no toca la IP del cliente; la app decide si confía en `X-Forwarded-For`/`CF-Connecting-IP` según `CLIENT_IP_HEADER` (ver DESIGN §5.5).
 - Salud: `curl http://localhost:8000/health` → `{"status":"ok","db":"ok"}` (responde `503` si PostgreSQL no está disponible).
 - Documentación interactiva: [http://localhost:8000/docs](http://localhost:8000/docs) (desde WSL se abre en el navegador de Windows). Se desactiva con `ENVIRONMENT=production`.
 
@@ -111,5 +112,6 @@ Las pruebas usan la base de `TEST_DATABASE_URL` (`fernwick_test`), nunca la de d
 | `TEST_DATABASE_URL` | `postgresql+psycopg://renzzo@/fernwick_test?host=/var/run/postgresql` | Base de pruebas (solo pytest) |
 | `CORS_ORIGINS` | `http://localhost:8000,http://localhost:5173` | Orígenes que pueden llamar a la API desde el navegador, separados por comas (nunca `*`; vacío = ninguno) |
 | `BUSINESS_TIMEZONE` | `America/New_York` | Zona del negocio: define qué es "hoy" para validar `preferred_date` |
+| `CLIENT_IP_HEADER` | `none` | De dónde sale la IP del visitante para el límite de solicitudes: `none` (IP de la conexión), `x-forwarded-for` o `cf-connecting-ip` (producción). Con `none` los encabezados de proxy se ignoran |
 
 La lista completa (incluidas las de fases futuras) está en `docs/DESIGN.md` §5.6.

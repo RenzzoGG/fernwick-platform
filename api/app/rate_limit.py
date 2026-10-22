@@ -5,13 +5,20 @@ solicitudes aceptadas. Una solicitud nueva se acepta si, en cada ventana (p. ej.
 últimos 60 s), hay menos solicitudes que el máximo permitido.
 """
 
+import ipaddress
+import logging
 import math
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
 from threading import Lock
+from typing import Annotated
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
+
+from app.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 # Cada cuántas solicitudes se borran de memoria las IP que ya no tienen marcas vigentes
 CLEANUP_EVERY = 1000
@@ -75,17 +82,52 @@ class RateLimiter:
             del self._hits[key]
 
 
-def rate_limit(limiter: RateLimiter) -> Callable[[Request], None]:
+def _parse_ip(value: str | None) -> str | None:
+    """Devuelve la IP normalizada, o None si `value` no es una IP válida.
+
+    Normalizar evita que la misma IPv6 escrita de dos formas tenga dos cupos distintos.
+    """
+    if not value:
+        return None
+    try:
+        return str(ipaddress.ip_address(value.strip()))
+    except ValueError:
+        return None
+
+
+def client_ip(request: Request, header: str) -> str:
+    """IP del visitante según CLIENT_IP_HEADER (ver config.py).
+
+    Si el encabezado configurado falta o no trae una IP válida, se usa la IP de la
+    conexión: así nadie elige su IP mandando basura en el encabezado.
+    """
+    ip = None
+    if header == "cf-connecting-ip":
+        # Cloudflare sobrescribe este encabezado con la IP que se conectó a él
+        ip = _parse_ip(request.headers.get("cf-connecting-ip"))
+    elif header == "x-forwarded-for":
+        # Cada proxy AGREGA a la derecha la IP que vio; la izquierda la puede escribir el cliente.
+        # getlist: el encabezado puede venir repetido en varias líneas.
+        entries = ",".join(request.headers.getlist("x-forwarded-for")).split(",")
+        ip = _parse_ip(entries[-1])
+    if ip is None:
+        ip = request.client.host if request.client else "unknown"
+    return ip
+
+
+def rate_limit(limiter: RateLimiter) -> Callable[..., None]:
     """Crea una dependencia de FastAPI que aplica `limiter` por IP del cliente.
 
-    Detrás del proxy de Railway, Uvicorn (--proxy-headers) ya pone en `request.client`
-    la IP real que viene en X-Forwarded-For.
+    Uvicorn se ejecuta con --no-proxy-headers: `request.client` es siempre la conexión
+    TCP real, y solo `client_ip()` decide si se confía en un encabezado de proxy.
     """
 
-    def dependency(request: Request) -> None:
-        key = request.client.host if request.client else "unknown"
+    def dependency(request: Request, settings: Annotated[Settings, Depends(get_settings)]) -> None:
+        key = client_ip(request, settings.client_ip_header)
         retry_after = limiter.hit(key)
         if retry_after is not None:
+            # Sin la IP: es dato personal (DESIGN §2.3)
+            logger.warning("Límite de solicitudes alcanzado en %s", request.url.path)
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests. Please try again later.",

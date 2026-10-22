@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     cors_origins: Annotated[list[str], NoDecode] = []
     # Zona horaria del negocio: define qué es "hoy" (fechas del formulario, métricas por día)
     business_timezone: str = "America/New_York"
+    # De dónde sale la IP del visitante (para el límite de solicitudes):
+    #   none             -> la IP de la conexión TCP; se ignoran los encabezados (desarrollo)
+    #   x-forwarded-for  -> la entrada derecha de X-Forwarded-For (la agrega el último proxy)
+    #   cf-connecting-ip -> el encabezado que pone Cloudflare (producción)
+    # Solo se confía en un encabezado si se indica aquí: si no, cualquiera podría inventar su IP.
+    client_ip_header: Literal["none", "x-forwarded-for", "cf-connecting-ip"] = "none"
 
     @field_validator("database_url", "test_database_url")
     @classmethod
