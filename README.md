@@ -38,6 +38,32 @@ uvicorn app.main:app --reload             # --reload reinicia al guardar cambios
 - Salud: `curl http://localhost:8000/health` → `{"status":"ok","db":"ok"}` (responde `503` si PostgreSQL no está disponible).
 - Documentación interactiva: [http://localhost:8000/docs](http://localhost:8000/docs) (desde WSL se abre en el navegador de Windows). Se desactiva con `ENVIRONMENT=production`.
 
+### Probar el formulario público
+
+`POST /v1/public/quotes` guarda una cotización enviada desde la landing. Con la API levantada:
+
+```bash
+curl -i -X POST http://localhost:8000/v1/public/quotes \
+  -H 'Content-Type: application/json' \
+  -d '{
+        "name": "Ada Lovelace",
+        "email": "ada@example.com",
+        "phone": "(212) 555-0100",
+        "service": "deep",
+        "home_size": "3-bed",
+        "preferred_date": "'"$(date -d '+7 days' +%F)"'",
+        "message": "We have a cat."
+      }'
+# HTTP/1.1 201 Created
+# {"id":42,"created_at":"2026-10-22T02:40:51.310448Z"}
+```
+
+- `service`: `standard`, `recurring`, `deep`, `move`, `office` o `post-renovation`. `home_size`: `studio`, `2-bed`, `3-bed`, `4-bed` u `office`. `message` es opcional.
+- Si el JSON trae `status`, `is_demo`, `id`, fechas o cualquier campo desconocido → `422`. Un dato inválido (email, teléfono con menos de 10 dígitos, fecha pasada…) también da `422`, con el campo en `detail[].loc`.
+- `website` es el honeypot: si llega con valor, responde `201` pero no guarda nada.
+- Cuerpo de más de 10 KB → `413`. Más de 5 solicitudes por minuto (o 20 por día) desde la misma IP → `429` con `Retry-After`. El límite vive en memoria: reiniciar `uvicorn` lo borra.
+- Solo los orígenes de `CORS_ORIGINS` pueden llamar a la API desde un navegador.
+
 ### Base de datos: migraciones y datos demo
 
 El esquema de la base lo definen los modelos (`app/models/`) y lo aplican las migraciones de Alembic (`alembic/versions/`). Nunca se crean ni modifican tablas a mano.
@@ -60,7 +86,7 @@ alembic upgrade head
 alembic check                             # confirma que modelos y base coinciden
 ```
 
-**Datos demo:** `python -m app.cli seed-demo` crea el usuario `demo@fernwick.example` (sin contraseña utilizable) y 40 cotizaciones ficticias con notas e historial. Es idempotente: cada ejecución borra las cotizaciones demo y las vuelve a crear, con fechas relativas a hoy, sin tocar las cotizaciones reales.
+**Datos demo:** `python -m app.cli seed-demo` crea el usuario `demo@fernwick.example` (sin contraseña utilizable) y 40 cotizaciones ficticias con notas e historial, con un reparto realista de servicios (sobre todo `standard`, `recurring` y `deep`; pocas `office` y `post-renovation`). Es idempotente: cada ejecución borra las cotizaciones demo y las vuelve a crear, con fechas relativas a hoy, sin tocar las cotizaciones reales.
 
 ### Correr las pruebas
 
@@ -83,5 +109,7 @@ Las pruebas usan la base de `TEST_DATABASE_URL` (`fernwick_test`), nunca la de d
 | `ENVIRONMENT` | `development` | `development`, `test` o `production` (en producción no hay `/docs`) |
 | `DATABASE_URL` | `postgresql+psycopg://renzzo@/fernwick?host=/var/run/postgresql` | Conexión a PostgreSQL (API y Alembic) |
 | `TEST_DATABASE_URL` | `postgresql+psycopg://renzzo@/fernwick_test?host=/var/run/postgresql` | Base de pruebas (solo pytest) |
+| `CORS_ORIGINS` | `http://localhost:8000,http://localhost:5173` | Orígenes que pueden llamar a la API desde el navegador, separados por comas (nunca `*`; vacío = ninguno) |
+| `BUSINESS_TIMEZONE` | `America/New_York` | Zona del negocio: define qué es "hoy" para validar `preferred_date` |
 
 La lista completa (incluidas las de fases futuras) está en `docs/DESIGN.md` §5.6.
