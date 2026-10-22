@@ -145,10 +145,14 @@ def get_quote(session: Session, viewer: User, quote_id: int) -> Quote | None:
         # cambiar su estado), se reemplazan sus datos y colecciones por los de la base
         .execution_options(populate_existing=True)
         # selectinload: una consulta por colección (WHERE quote_id IN ...) en vez de una por
-        # fila al recorrerlas (el problema "N+1"); también trae a los autores
+        # fila al recorrerlas (el problema "N+1"); también trae a los autores.
+        # load_only: de los autores solo id y email (lo que se muestra). El rol demo no tiene
+        # permiso sobre las demás columnas de users (password_hash, role...): pedirlas daría error.
         .options(
-            selectinload(Quote.notes).selectinload(QuoteNote.author),
-            selectinload(Quote.status_changes).selectinload(QuoteStatusChange.changed_by_user),
+            selectinload(Quote.notes).selectinload(QuoteNote.author).load_only(User.id, User.email),
+            selectinload(Quote.status_changes)
+            .selectinload(QuoteStatusChange.changed_by_user)
+            .load_only(User.id, User.email),
         )
     )
 

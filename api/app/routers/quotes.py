@@ -1,7 +1,8 @@
 """Endpoints del panel de administración: cotizaciones.
 
 Los routers solo traducen HTTP. El filtro demo/real lo aplican los servicios con el usuario
-que reciben, así ninguna ruta puede saltárselo.
+que reciben, así ninguna ruta puede saltárselo. Y por debajo, get_db_for_user pone la sesión
+del demo con el rol fernwick_demo: RLS lo aísla aunque un servicio fallara.
 """
 
 from typing import Annotated
@@ -9,8 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
-from app.db import get_db
-from app.deps import get_current_user, require_role
+from app.deps import get_current_user, get_db_for_user, require_role
 from app.models import User
 from app.schemas.errors import FORBIDDEN, QUOTE_NOT_FOUND, STATUS_CONFLICT, UNAUTHORIZED
 from app.schemas.quote import (
@@ -51,7 +51,7 @@ def get_quotes(
     # Query(): FastAPI arma el modelo con los parámetros de la URL y lo valida (422 si no sirve)
     params: Annotated[QuoteListParams, Query()],
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db_for_user)],
 ) -> QuotePage:
     items, total = list_quotes(db, user, params)
     return QuotePage(
@@ -66,7 +66,7 @@ def get_quotes(
 def get_quote_detail(
     quote_id: QuoteId,
     user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db_for_user)],
 ) -> QuoteDetail:
     quote = get_quote(db, user, quote_id)
     if quote is None:
@@ -83,7 +83,7 @@ def update_quote_status(
     quote_id: QuoteId,
     data: StatusUpdate,
     user: AdminUser,
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db_for_user)],
 ) -> QuoteDetail:
     try:
         quote = change_status(db, user, quote_id, data.status)
@@ -104,7 +104,7 @@ def create_note(
     quote_id: QuoteId,
     data: NoteCreate,
     user: AdminUser,
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_db_for_user)],
 ) -> NoteOut:
     note = add_note(db, user, quote_id, data.body)
     if note is None:

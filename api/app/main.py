@@ -1,12 +1,22 @@
 """Punto de entrada de la API: `uvicorn app.main:app`."""
 
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DBAPIError
 
 from app.config import get_settings
+from app.deps import FORBIDDEN_DETAIL
 from app.logging_config import configure_logging
 from app.middleware import BodySizeLimitMiddleware
 from app.routers import auth, health, metrics, public, quotes
+
+logger = logging.getLogger(__name__)
+
+# SQLSTATE de PostgreSQL para "permiso denegado", tanto por GRANT como por una política de RLS
+INSUFFICIENT_PRIVILEGE = "42501"
 
 settings = get_settings()
 configure_logging(settings.environment)
@@ -42,3 +52,16 @@ app.include_router(public.router)
 app.include_router(auth.router)
 app.include_router(quotes.router)
 app.include_router(metrics.router)
+
+
+@app.exception_handler(DBAPIError)
+async def database_permission_denied(request: Request, exc: DBAPIError) -> JSONResponse:
+    """La base negó la operación por permisos o RLS -> 403 (DESIGN §3.3).
+
+    Solo pasa si falló la primera capa (require_role o el filtro de servicios): por eso queda
+    en el log como advertencia. Cualquier otro error de la base sigue siendo un 500.
+    """
+    if getattr(exc.orig, "sqlstate", None) != INSUFFICIENT_PRIVILEGE:
+        raise exc
+    logger.warning("La base negó una operación por permisos: %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=403, content={"detail": FORBIDDEN_DETAIL})

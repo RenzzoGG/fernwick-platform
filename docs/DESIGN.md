@@ -291,9 +291,11 @@ sequenceDiagram
     A-->>P: 200 con datos ficticios
 ```
 
-- Una dependencia de FastAPI (`get_db_for_user`) abre la sesión de SQLAlchemy y, si el usuario es demo, ejecuta `SET LOCAL ROLE fernwick_demo` antes de cualquier consulta.
-- **`SET LOCAL`** dura solo hasta el final de la transacción. Esto es clave con un **pool de conexiones**: la conexión vuelve al pool ya "limpia" y la siguiente petición (quizá de un admin) no hereda el rol demo.
-- Además, la API rechaza con **403** cualquier escritura de un demo **antes** de llegar a la base. Si alguna vez falla esa capa, PostgreSQL responde `permission denied` (no hay `GRANT INSERT/UPDATE`) y la API lo convierte en 403.
+- **Cada transacción empieza con `SET LOCAL ROLE`** (`app/db.py`): la sesión guarda su rol en `Session.info` (`set_role`) y un evento `after_begin` de SQLAlchemy ejecuta `SET LOCAL ROLE <rol>` al empezar **cada** transacción. Se repite en cada una porque las rutas hacen `commit()` y siguen consultando (cambiar el estado y luego leer el detalle): sin el evento, la segunda transacción correría con el rol de la conexión. Los nombres de rol salen de una lista cerrada (`ROLES`): un identificador no puede ir como parámetro enlazado.
+- `get_db` abre la sesión como `fernwick_app`. La dependencia `get_db_for_user` (`app/deps.py`), que usan las rutas del panel, la pasa a `fernwick_demo` si el usuario no es admin (falla cerrado, igual que `scope_is_demo`). El usuario se carga antes, como `fernwick_app`: el demo no puede leer `users` salvo `id` y `email`. Por eso el detalle carga a los autores con `load_only(User.id, User.email)`.
+- **`SET LOCAL`** dura solo hasta el final de la transacción. Esto es clave con un **pool de conexiones**: la conexión vuelve al pool ya "limpia" y la siguiente petición (quizá de un admin) no hereda el rol demo. `test_role_per_transaction.py` lo prueba con un pool de una sola conexión (mismo `pg_backend_pid`), y muestra que con `SET ROLE` sin `LOCAL` el rol sí se quedaría pegado.
+- **En local** la conexión entra como el dueño (`renzzo`, por socket y sin contraseña) y cada transacción baja a `fernwick_app` o `fernwick_demo`: las consultas de la API corren igual con RLS. **En Railway** la conexión entra como `fernwick_app` (`SET LOCAL ROLE fernwick_app` es válido y no cambia nada); si alguien configurara por error `DATABASE_URL` con el dueño, cada transacción igual bajaría a `fernwick_app`.
+- Además, la API rechaza con **403** cualquier escritura de un demo **antes** de llegar a la base. Si alguna vez falla esa capa, PostgreSQL responde `permission denied` (SQLSTATE `42501`: no hay `GRANT INSERT/UPDATE`, o la política lo impide) y un manejador de excepciones en `main.py` lo convierte en 403 y lo registra como advertencia.
 - Login, `/auth/me` y el formulario público corren como `fernwick_app` (sin `SET ROLE`).
 
 ---

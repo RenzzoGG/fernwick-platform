@@ -30,9 +30,10 @@ get_settings.cache_clear()
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import text  # noqa: E402
 from sqlalchemy.orm import Session  # noqa: E402
 
-from app.db import engine, get_db  # noqa: E402
+from app.db import APP_ROLE, ROLE_KEY, engine, get_db, set_role  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import User  # noqa: E402
 from app.models.user import DEMO_EMAIL  # noqa: E402
@@ -80,7 +81,19 @@ def db_session() -> Iterator[Session]:
 def client(db_session: Session) -> Iterator[TestClient]:
     # Las rutas usan la misma sesión que la prueba: sus commit() solo cierran un SAVEPOINT,
     # todo se revierte al final y la prueba puede consultar lo que guardó la API
-    app.dependency_overrides[get_db] = lambda: db_session
+    def override_get_db() -> Iterator[Session]:
+        # Igual que get_db: la petición corre como fernwick_app (y get_db_for_user la pasa a
+        # fernwick_demo si es el demo). La conexión de las pruebas es del dueño, que salta RLS:
+        # sin esto las pruebas de la API no probarían RLS.
+        set_role(db_session, APP_ROLE)
+        try:
+            yield db_session
+        finally:
+            # De vuelta al dueño para que la prueba pueda revisar o preparar datos sin RLS
+            db_session.info.pop(ROLE_KEY, None)
+            db_session.execute(text("RESET ROLE"))
+
+    app.dependency_overrides[get_db] = override_get_db
     # TestClient llama a la app en el mismo proceso, sin levantar un servidor
     with TestClient(app) as test_client:
         yield test_client

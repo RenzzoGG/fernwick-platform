@@ -8,13 +8,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
-from app.db import get_db
+from app.db import DEMO_ROLE, get_db, set_role
 from app.models import User
 from app.security import InvalidTokenError, decode_access_token
 
 # Lee el header "Authorization: Bearer <token>" y agrega el botón "Authorize" en /docs.
 # auto_error=False: si falta, devuelve None y respondemos nosotros con 401 (y nuestro mensaje).
 bearer_scheme = HTTPBearer(auto_error=False)
+
+FORBIDDEN_DETAIL = "You do not have permission to perform this action."
 
 
 def _unauthorized() -> HTTPException:
@@ -54,9 +56,23 @@ def require_role(*roles: str) -> Callable[..., User]:
     def dependency(user: Annotated[User, Depends(get_current_user)]) -> User:
         if user.role not in roles:
             # 403 y no 401: sabemos quién es, pero no tiene permiso
-            raise HTTPException(
-                status_code=403, detail="You do not have permission to perform this action."
-            )
+            raise HTTPException(status_code=403, detail=FORBIDDEN_DETAIL)
         return user
 
     return dependency
+
+
+def get_db_for_user(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Session:
+    """La sesión de la petición con el rol de PostgreSQL que le toca al usuario.
+
+    El demo pasa a fernwick_demo: desde aquí, RLS solo le deja ver filas demo y nada de escribir,
+    aunque un servicio olvidara su filtro. Falla cerrado como scope_is_demo: cualquier rol que no
+    sea "admin" se trata como demo. El usuario ya se cargó antes, como fernwick_app (el demo no
+    puede leer users.password_hash ni las demás columnas de users salvo id y email).
+    """
+    if user.role != "admin":
+        set_role(db, DEMO_ROLE)
+    return db
