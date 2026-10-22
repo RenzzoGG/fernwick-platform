@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.logging_config import configure_logging
 from app.middleware import BodySizeLimitMiddleware
-from app.routers import auth, health, public, quotes
+from app.routers import auth, health, metrics, public, quotes
 
 settings = get_settings()
 configure_logging(settings.environment)
@@ -41,3 +41,4 @@ app.include_router(health.router)
 app.include_router(public.router)
 app.include_router(auth.router)
 app.include_router(quotes.router)
+app.include_router(metrics.router)
