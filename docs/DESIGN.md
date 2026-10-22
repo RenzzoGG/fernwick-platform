@@ -199,6 +199,7 @@ Notas de aprendizaje:
 - **El orden de columnas en un índice compuesto importa.** `(is_demo, status, created_at DESC)` sirve para `WHERE is_demo = false AND status = 'new' ORDER BY created_at DESC` sin ordenar en memoria. `is_demo` va primero porque **todas las consultas filtran por él** (en la fase 5 lo hace la capa de servicios; desde la fase 6, también la política de RLS).
 - **PostgreSQL no crea índices en las FK automáticamente** (solo en PK y `UNIQUE`). Sin ellos, cada "notas de la cotización 42" y cada `ON DELETE CASCADE` recorrería toda la tabla hija. Los índices `(quote_id, …)` lo resuelven.
 - **¿Por qué trigramas?** Un B-tree normal solo ayuda con `LIKE 'texto%'` (prefijo). Un índice GIN de trigramas parte el texto en grupos de 3 letras y sirve para buscar "en cualquier parte" sin recorrer la tabla. Con pocos cientos de filas PostgreSQL quizá ni lo use (un recorrido secuencial es más barato), y está bien: es la forma correcta de preparar la búsqueda para crecer. Verificado en la fase 5 con `EXPLAIN ANALYZE` sobre 20 000 filas: `BitmapOr` de los tres índices, < 1 ms.
+- **Desde la fase 6 la API ya no usa estos índices**: con RLS, PostgreSQL no puede usar `ILIKE`/`LIKE` como condición de índice y la búsqueda es un `Seq Scan` (trade-off aceptado, ver §3.4). Se mantienen porque cuestan poco al escribir, los usan las consultas del dueño y los necesitaría la mejora descrita en §3.4.
 - **Lista pendiente de GIN** (*fastupdate*): las inserciones nuevas van a una lista sin ordenar que luego vacía autovacuum. Justo después de insertar miles de filas, el planificador la ve y estima el índice como caro (elige `Seq Scan`). Por eso la prueba del plan llama a `gin_clean_pending_list` antes de `ANALYZE`, que es lo que en producción hace autovacuum.
 - El teléfono se busca solo por dígitos (`regexp_replace(phone, '\D', '', 'g')`), y **sí necesita índice** (fase 5, migración `0002`): la búsqueda es `nombre OR email OR teléfono`, y si una rama de un `OR` no tiene índice, PostgreSQL recorre toda la tabla y tampoco usa los índices de nombre y email. Con los tres, el plan es un `BitmapOr`. Es un **índice de expresión** (`regexp_replace` es `IMMUTABLE`, requisito para indexarla): solo se usa si la consulta escribe exactamente la misma expresión, por eso se define una vez (`PHONE_DIGITS` en `models/quote.py`) con las constantes como literales SQL y no como parámetros.
 
@@ -299,6 +300,28 @@ sequenceDiagram
 - Además, la API rechaza con **403** cualquier escritura de un demo **antes** de llegar a la base. Si alguna vez falla esa capa, PostgreSQL responde `permission denied` (SQLSTATE `42501`: no hay `GRANT INSERT/UPDATE`, o la política lo impide) y un manejador de excepciones en `main.py` lo convierte en 403 y lo registra como advertencia.
 - Login, `/auth/me` y el formulario público corren como `fernwick_app` (sin `SET ROLE`).
 
+### 3.4 RLS y la búsqueda con trigramas (trade-off)
+
+**Qué pasa.** Con RLS activo, la búsqueda del panel (`name ILIKE … OR email ILIKE … OR dígitos(phone) LIKE …`) deja de usar los índices GIN de trigramas y recorre toda la tabla:
+
+- Una política de RLS es una "barrera de seguridad": PostgreSQL garantiza que **ninguna función que pueda filtrar información** se evalúe sobre filas que la política esconde. Una función que lanza un error o deja ver algo según el contenido de una fila podría revelar datos de filas ajenas.
+- Solo las funciones marcadas **`LEAKPROOF`** pueden evaluarse antes que la política. `=` (`texteq`) lo es; las de `LIKE`/`ILIKE` (`textlike`, `texticlike`) **no**.
+- Una condición de índice se evalúa *antes* que el resto: por eso PostgreSQL no puede usar `ILIKE` para entrar al índice, aplica primero la política (`NOT is_demo`) y después filtra la búsqueda fila por fila (`Seq Scan`).
+
+**Medición** (`EXPLAIN ANALYZE`, 20 000 filas sintéticas en `fernwick_test` con `ROLLBACK`, mediana de 7 ejecuciones, por consulta; la lista hace dos: página y total):
+
+| Búsqueda | Dueño, sin RLS (`BitmapOr`) | `fernwick_app`, con RLS (`Seq Scan`) |
+|---|---|---|
+| `4b1c2a9f` (nombre y email) | 0.13 ms | 17.6 ms |
+| `555-0123` (más el teléfono) | 0.14 ms | 36.8 ms |
+
+El `Seq Scan` crece lineal con el número de filas. Con el volumen de este proyecto (cientos de cotizaciones) es imperceptible; con 20 000 son decenas de milisegundos por búsqueda.
+
+**Decisión: aceptar el `Seq Scan`.** Preferimos la seguridad simple a la optimización. Opciones descartadas:
+
+- **Marcar `texticlike` como `LEAKPROOF`**: exige superusuario, cambia una función interna de PostgreSQL para todas las bases y no es verdad (puede lanzar errores).
+- **Función `SECURITY DEFINER`** que busque con los índices como dueño (saltándose RLS) y devuelva ids candidatos, con la consulta de afuera (`WHERE id IN (…)`) todavía filtrada por RLS. Mantiene los índices, pero abre un hueco: corre como dueño, así que si el rol demo pudiera llamarla directamente, sería un **oráculo** para saber qué ids reales coinciden con una búsqueda. **Queda anotada como mejora posible** si la tabla crece mucho, y exigiría: `SET search_path` fijo en la función, `REVOKE EXECUTE … FROM PUBLIC`, `EXECUTE` solo para `fernwick_app` (no para el demo) y filtrar por `is_demo` dentro de la propia función.
+
 ---
 
 ## 4. Endpoints de la API
@@ -338,7 +361,7 @@ Detalles de comportamiento:
 - **Alcance demo/real en los servicios** (fase 5): toda función de `services/quotes.py` y `services/metrics.py` recibe al usuario como argumento obligatorio y filtra con `Quote.is_demo == scope_is_demo(user)`. El demo ve solo filas ficticias y el **admin solo las reales** (lo mismo que hará la política RLS de `fernwick_app`). `scope_is_demo` **falla cerrado**: cualquier rol que no sea `admin` se trata como demo. Las notas y el historial se cargan desde la cotización ya filtrada (la FK compuesta garantiza que comparten su `is_demo`). `tests/test_demo_isolation.py` recorre cada ruta con todas las combinaciones de filtros, búsquedas, órdenes y páginas, y comprueba que ningún dato real aparece en ninguna respuesta.
 - **`404` y no `403`** cuando un demo pide `/v1/quotes/{id}` de una cotización real: la fila "no existe" para él (hoy por el filtro de servicios; desde la fase 6, también por RLS), con el mismo cuerpo que un id inexistente, así ni siquiera se filtra que ese id existe. Simétrico: el admin recibe 404 con un id demo.
 - **Escrituras solo admin**: `Depends(require_role("admin"))`. Las dependencias corren antes que la ruta, así el demo recibe 403 aunque el id no exista o el cuerpo sea inválido.
-- **Búsqueda `q`** (2–100 caracteres; vacía = sin búsqueda): `name ILIKE '%q%' OR email ILIKE '%q%'`, más `dígitos(phone) LIKE '%dígitos%'` **solo si `q` parece un teléfono** (solo dígitos, espacios y `+ ( ) - .`, con ≥ 3 dígitos): así `555-0142` encuentra `(305) 555-0142`, y `ana` o `4b1c2a9f` no buscan en el teléfono. `%`, `_` y `\` se escapan (buscar `100%` no es un comodín). Los valores siempre van como parámetros enlazados de SQLAlchemy, nunca concatenados (inyección SQL). Las tres ramas usan su índice GIN de trigramas (`BitmapOr`, §2.4); `tests/test_search_explain.py` lo verifica con `EXPLAIN` sobre 20 000 filas sintéticas.
+- **Búsqueda `q`** (2–100 caracteres; vacía = sin búsqueda): `name ILIKE '%q%' OR email ILIKE '%q%'`, más `dígitos(phone) LIKE '%dígitos%'` **solo si `q` parece un teléfono** (solo dígitos, espacios y `+ ( ) - .`, con ≥ 3 dígitos): así `555-0142` encuentra `(305) 555-0142`, y `ana` o `4b1c2a9f` no buscan en el teléfono. `%`, `_` y `\` se escapan (buscar `100%` no es un comodín). Los valores siempre van como parámetros enlazados de SQLAlchemy, nunca concatenados (inyección SQL). Con RLS (desde la fase 6) la búsqueda recorre la tabla (`Seq Scan`); sin RLS las tres ramas usarían su índice GIN de trigramas (`BitmapOr`). El porqué y las cifras están en §3.4; `tests/test_search_explain.py` verifica los dos planes con `EXPLAIN` sobre 20 000 filas sintéticas.
 - **`sort`**: lista blanca (`created_at`, `-created_at`, `preferred_date`, `-preferred_date`) mapeada a columnas con un diccionario fijo, con el `id` como desempate (sin él, filas con la misma fecha podrían repetirse o saltarse entre páginas). Cualquier otro valor da 422. Los parámetros de la lista son un modelo Pydantic con `extra="forbid"`: un parámetro desconocido también da 422. Una página fuera de rango devuelve `items: []` con el `total` real.
 - **Cambio de estado**: se permite cualquier transición (el negocio puede retroceder, p. ej. `scheduled` → `contacted`), excepto al mismo estado, que responde **409** sin guardar nada (en vez de un 200 "sin cambios": el panel se entera de que no pasó nada, quizá porque otro admin ya lo cambió, y el historial no registra cambios vacíos; además lo exige el `CHECK (from_status <> to_status)`). `SELECT … FOR UPDATE` (con `populate_existing` para releer la fila tras esperar el bloqueo), luego `UPDATE` de la cotización e `INSERT` del historial con **un solo `commit()`**: o se guardan los dos o ninguno (probado forzando un fallo en el `INSERT`). Si dos admins cambian el estado a la vez, el segundo espera y el historial registra el `from_status` correcto.
 - **Notas**: el cuerpo se recorta; vacío o de más de 2000 caracteres → 422 (`NOTE_BODY_MAX` en `models/base.py`, el mismo del `CHECK`). La nota hereda el `is_demo` de su cotización.
@@ -571,3 +594,4 @@ Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pe
 - **`httpx2`**: Starlette avisa que `TestClient` con `httpx` está obsoleto y sugiere `httpx2`; cambiarlo cuando sea estable (requiere aprobar la dependencia).
 - **Restablecer los datos demo** periódicamente (hoy no hace falta: el demo no puede escribir).
 - **Exportar a CSV** y paginación por cursor si el volumen crece.
+- **Búsqueda con índices bajo RLS** (función `SECURITY DEFINER`, §3.4) si la tabla crece tanto que el `Seq Scan` de la búsqueda se note (decenas de miles de filas).

@@ -1,17 +1,28 @@
-"""La búsqueda del panel usa los índices GIN de trigramas (y no recorre toda la tabla).
+"""Plan de la búsqueda del panel: con RLS recorre la tabla (Seq Scan); sin RLS usa los índices.
+
+Trade-off aceptado en la fase 6 (DESIGN §2.4 y §3.4): ILIKE y LIKE no son "leakproof", así que
+con RLS PostgreSQL los evalúa DESPUÉS de la política y no puede usarlos como condición de un
+índice. La API corre con RLS (fernwick_app / fernwick_demo), así que su búsqueda es un Seq Scan.
+Las pruebas "sin RLS" (como dueño) muestran que los índices siguen sirviendo y que la causa del
+Seq Scan es RLS, no la consulta.
 
 Con pocas filas PostgreSQL prefiere, con razón, un recorrido secuencial; por eso se cargan
 filas sintéticas dentro de la transacción de la prueba (se revierten al final) y se actualizan
 las estadísticas con ANALYZE antes de pedir el plan.
 """
 
+import re
+from contextlib import nullcontext
+
 import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.db import APP_ROLE
 from app.models import Quote, User
 from app.schemas.quote import QuoteListParams
 from app.services.quotes import list_conditions
+from tests.helpers import como_rol
 
 FILAS = 20_000
 
@@ -42,18 +53,40 @@ def volumen(db_session: Session) -> None:
     db_session.execute(text("ANALYZE quotes"))
 
 
-def plan(session: Session, q: str) -> str:
-    """EXPLAIN de la consulta exacta que arma el servicio para la lista."""
+def plan(session: Session, q: str, role: str | None = None) -> str:
+    """EXPLAIN de la consulta exacta que arma el servicio para la lista.
+
+    role: None = como el dueño (salta RLS); APP_ROLE = como corre la API del admin.
+    """
     stmt = select(func.count()).select_from(Quote).where(
         *list_conditions(User(role="admin"), QuoteListParams(q=q))
     )
     connection = session.connection()
     compiled = stmt.compile(connection)
-    rows = connection.exec_driver_sql("EXPLAIN " + compiled.string, compiled.params)
-    return "\n".join(rows.scalars())
+    with como_rol(session, role) if role else nullcontext():
+        rows = connection.exec_driver_sql("EXPLAIN " + compiled.string, compiled.params)
+        return "\n".join(rows.scalars())
 
 
-def test_busqueda_por_texto_usa_los_indices_de_nombre_y_email(db_session, volumen):
+@pytest.mark.parametrize("q", ["4b1c2a9f", "555-0123"])
+def test_con_rls_la_busqueda_recorre_la_tabla(db_session, volumen, q):
+    texto = plan(db_session, q, APP_ROLE)
+    assert "Seq Scan on quotes" in texto
+    assert "_trgm" not in texto
+    # La política (NOT is_demo) va primero en el filtro; la búsqueda, después
+    assert re.search(r"Filter: \(\(NOT is_demo\).*~~\*", texto)
+
+
+def test_la_causa_es_que_like_no_es_leakproof(db_session):
+    # Solo las funciones LEAKPROOF pueden evaluarse antes que la política de RLS (y así usar
+    # un índice): las de LIKE/ILIKE no lo son, y la de "=" sí.
+    leakproof = dict(db_session.execute(text(
+        "SELECT proname, proleakproof FROM pg_proc WHERE proname IN ('texticlike', 'textlike', 'texteq')"
+    )).all())
+    assert leakproof == {"texticlike": False, "textlike": False, "texteq": True}
+
+
+def test_sin_rls_la_busqueda_por_texto_usa_los_indices_de_nombre_y_email(db_session, volumen):
     texto = plan(db_session, "4b1c2a9f")
     assert "ix_quotes_name_trgm" in texto
     assert "ix_quotes_email_trgm" in texto
@@ -62,7 +95,7 @@ def test_busqueda_por_texto_usa_los_indices_de_nombre_y_email(db_session, volume
     assert "Seq Scan" not in texto
 
 
-def test_busqueda_con_digitos_usa_tambien_el_indice_del_telefono(db_session, volumen):
+def test_sin_rls_la_busqueda_con_digitos_usa_tambien_el_indice_del_telefono(db_session, volumen):
     texto = plan(db_session, "555-0123")
     assert "ix_quotes_name_trgm" in texto
     assert "ix_quotes_email_trgm" in texto
