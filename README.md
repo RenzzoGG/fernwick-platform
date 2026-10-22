@@ -99,6 +99,40 @@ curl -s http://localhost:8000/v1/auth/me -H "Authorization: Bearer $TOKEN"
 - `/v1/auth/demo` responde `404` si `DEMO_ENABLED=false` o si falta el usuario demo.
 - En `/docs`, el botón **Authorize** permite pegar un token y probar las rutas privadas.
 
+### Endpoints del panel
+
+Todas exigen token. El **demo solo ve cotizaciones ficticias** y el **admin solo las reales** (el filtro lo aplica la capa de servicios). Cambiar estado y agregar notas es **solo para admin**.
+
+```bash
+TOKEN=...   # de /v1/auth/login (admin) o /v1/auth/demo
+H="Authorization: Bearer $TOKEN"
+
+# Lista: filtros, búsqueda (nombre, email o teléfono por dígitos), paginación y orden
+curl -s "http://localhost:8000/v1/quotes" -H "$H"
+curl -s "http://localhost:8000/v1/quotes?status=new&page=2&page_size=50&sort=preferred_date" -H "$H"
+curl -s "http://localhost:8000/v1/quotes?q=lovelace" -H "$H"
+curl -s "http://localhost:8000/v1/quotes?q=555-0142" -H "$H"     # encuentra "(305) 555-0142"
+# {"items":[{"id":286,"name":"...","status":"new","created_at":"...Z",...}],"total":1,"page":1,"page_size":20}
+
+# Detalle con notas e historial de estados
+curl -s http://localhost:8000/v1/quotes/286 -H "$H"
+
+# Cambiar estado (solo admin; mismo estado → 409)
+curl -s -X PATCH http://localhost:8000/v1/quotes/286/status -H "$H" \
+  -H 'Content-Type: application/json' -d '{"status": "contacted"}'
+
+# Agregar una nota interna (solo admin) → 201
+curl -s -X POST http://localhost:8000/v1/quotes/286/notes -H "$H" \
+  -H 'Content-Type: application/json' -d '{"body": "Llamar el lunes"}'
+
+# Métricas: totales por estado y servicio, y los últimos 30 días (con ceros)
+curl -s http://localhost:8000/v1/metrics/summary -H "$H"
+```
+
+- `status`: `new`, `contacted`, `scheduled` o `closed`. `sort`: `created_at`, `-created_at` (por defecto), `preferred_date` o `-preferred_date`. `page_size`: 1 a 100 (por defecto 20). `q`: 2 a 100 caracteres.
+- Cualquier otro valor, un `sort` fuera de la lista o un parámetro desconocido → `422`.
+- Sin token → `401`. Demo intentando escribir → `403`. Id que no existe **o que no es visible** para el usuario (p. ej. el demo pidiendo una cotización real) → `404`, con el mismo mensaje.
+
 ### Base de datos: migraciones y datos demo
 
 El esquema de la base lo definen los modelos (`app/models/`) y lo aplican las migraciones de Alembic (`alembic/versions/`). Nunca se crean ni modifican tablas a mano.

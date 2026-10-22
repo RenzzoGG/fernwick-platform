@@ -198,7 +198,8 @@ Notas de aprendizaje:
 
 - **El orden de columnas en un índice compuesto importa.** `(is_demo, status, created_at DESC)` sirve para `WHERE is_demo = false AND status = 'new' ORDER BY created_at DESC` sin ordenar en memoria. `is_demo` va primero porque **todas las consultas filtran por él** (en la fase 5 lo hace la capa de servicios; desde la fase 6, también la política de RLS).
 - **PostgreSQL no crea índices en las FK automáticamente** (solo en PK y `UNIQUE`). Sin ellos, cada "notas de la cotización 42" y cada `ON DELETE CASCADE` recorrería toda la tabla hija. Los índices `(quote_id, …)` lo resuelven.
-- **¿Por qué trigramas?** Un B-tree normal solo ayuda con `LIKE 'texto%'` (prefijo). Un índice GIN de trigramas parte el texto en grupos de 3 letras y sirve para buscar "en cualquier parte" sin recorrer la tabla. Con pocos cientos de filas PostgreSQL quizá ni lo use (un recorrido secuencial es más barato), y está bien: lo verificaremos con `EXPLAIN ANALYZE` y es la forma correcta de preparar la búsqueda para crecer.
+- **¿Por qué trigramas?** Un B-tree normal solo ayuda con `LIKE 'texto%'` (prefijo). Un índice GIN de trigramas parte el texto en grupos de 3 letras y sirve para buscar "en cualquier parte" sin recorrer la tabla. Con pocos cientos de filas PostgreSQL quizá ni lo use (un recorrido secuencial es más barato), y está bien: es la forma correcta de preparar la búsqueda para crecer. Verificado en la fase 5 con `EXPLAIN ANALYZE` sobre 20 000 filas: `BitmapOr` de los tres índices, < 1 ms.
+- **Lista pendiente de GIN** (*fastupdate*): las inserciones nuevas van a una lista sin ordenar que luego vacía autovacuum. Justo después de insertar miles de filas, el planificador la ve y estima el índice como caro (elige `Seq Scan`). Por eso la prueba del plan llama a `gin_clean_pending_list` antes de `ANALYZE`, que es lo que en producción hace autovacuum.
 - El teléfono se busca solo por dígitos (`regexp_replace(phone, '\D', '', 'g')`), y **sí necesita índice** (fase 5, migración `0002`): la búsqueda es `nombre OR email OR teléfono`, y si una rama de un `OR` no tiene índice, PostgreSQL recorre toda la tabla y tampoco usa los índices de nombre y email. Con los tres, el plan es un `BitmapOr`. Es un **índice de expresión** (`regexp_replace` es `IMMUTABLE`, requisito para indexarla): solo se usa si la consulta escribe exactamente la misma expresión, por eso se define una vez (`PHONE_DIGITS` en `models/quote.py`) con las constantes como literales SQL y no como parámetros.
 
 ### 2.5 Migraciones y datos demo
@@ -292,8 +293,8 @@ Convenciones:
 | POST | `/v1/auth/login` | público | `{email, password}` | `200 {"access_token", "token_type":"bearer", "expires_in", "role"}` | 401, 422, 429 |
 | POST | `/v1/auth/demo` | público (si `DEMO_ENABLED`) | — | igual que login, `role: "demo"` | 404 si está desactivado o falta el usuario demo, 429 |
 | GET | `/v1/auth/me` | admin, demo | — | `200 {"id", "email", "role"}` | 401 |
-| GET | `/v1/quotes` | admin, demo | query: `status?`, `q?`, `page=1`, `page_size=20` (máx. 100), `sort=-created_at` | `200 {"items":[QuoteSummary], "total", "page", "page_size"}` | 401, 422 |
-| GET | `/v1/quotes/{id}` | admin, demo | — | `200 QuoteDetail` (con `notes` e `status_history`) | 401, 404 |
+| GET | `/v1/quotes` | admin, demo | query: `status?`, `q?` (2–100), `page=1` (máx. 10 000), `page_size=20` (máx. 100), `sort=-created_at` | `200 {"items":[QuoteSummary], "total", "page", "page_size"}` | 401, 422 |
+| GET | `/v1/quotes/{id}` | admin, demo | — | `200 QuoteDetail` (con `notes` e `status_history`) | 401, 404, 422 (id no entero o fuera de `bigint`) |
 | PATCH | `/v1/quotes/{id}/status` | **solo admin** | `{"status"}` | `200 QuoteDetail` | 401, 403, 404, 409 si ya tiene ese estado, 422 |
 | POST | `/v1/quotes/{id}/notes` | **solo admin** | `{"body"}` | `201 Note` | 401, 403, 404, 422 |
 | GET | `/v1/metrics/summary` | admin, demo | — | `200 {"total", "by_status":{...}, "by_service":{...}, "last_30_days":[{"date","count"}]}` | 401 |
@@ -310,11 +311,15 @@ StatusChange = {from_status, to_status, changed_by_email | null, changed_at}
 Detalles de comportamiento:
 
 - **Formulario público** (`routers/public.py` → `services/quotes.py`). Los campos se llaman igual que las columnas (`home_size`, `preferred_date`); el `fetch` de la landing los mapea desde los `name` del HTML (`size`, `date`). `website` es el **honeypot** (§5.5). El cliente **no** puede enviar `status`, `is_demo`, `id` ni fechas (422 `extra_forbidden`): el servidor fija `status = 'new'` e `is_demo = false`. La respuesta no repite los datos: el visitante ya los tiene.
-- **`404` y no `403`** cuando un demo pide `/v1/quotes/{id}` de una cotización real: RLS hace que la fila "no exista" para él, y así ni siquiera se filtra que ese id existe.
-- **Búsqueda `q`**: busca en nombre, email (`ILIKE`) y teléfono (por dígitos). Los parámetros siempre van como parámetros enlazados de SQLAlchemy, nunca concatenados (inyección SQL).
-- **`sort`**: lista blanca (`created_at`, `-created_at`, `preferred_date`, `-preferred_date`); cualquier otro valor da 422.
-- **Cambio de estado**: se permite cualquier transición (el negocio puede retroceder, p. ej. `scheduled` → `contacted`), excepto al mismo estado. Se hace en una transacción con `SELECT … FOR UPDATE` sobre la cotización para que, si dos admins cambian el estado a la vez, el historial registre el `from_status` correcto.
-- **Métricas**: `by_status` y `by_service` incluyen todas las claves aunque valgan 0; `last_30_days` usa `generate_series` para que los días sin cotizaciones aparezcan con `count: 0` (si no, la gráfica tendría huecos). Los días se calculan en `BUSINESS_TIMEZONE`.
+- **Alcance demo/real en los servicios** (fase 5): toda función de `services/quotes.py` y `services/metrics.py` recibe al usuario como argumento obligatorio y filtra con `Quote.is_demo == scope_is_demo(user)`. El demo ve solo filas ficticias y el **admin solo las reales** (lo mismo que hará la política RLS de `fernwick_app`). `scope_is_demo` **falla cerrado**: cualquier rol que no sea `admin` se trata como demo. Las notas y el historial se cargan desde la cotización ya filtrada (la FK compuesta garantiza que comparten su `is_demo`). `tests/test_demo_isolation.py` recorre cada ruta con todas las combinaciones de filtros, búsquedas, órdenes y páginas, y comprueba que ningún dato real aparece en ninguna respuesta.
+- **`404` y no `403`** cuando un demo pide `/v1/quotes/{id}` de una cotización real: la fila "no existe" para él (hoy por el filtro de servicios; desde la fase 6, también por RLS), con el mismo cuerpo que un id inexistente, así ni siquiera se filtra que ese id existe. Simétrico: el admin recibe 404 con un id demo.
+- **Escrituras solo admin**: `Depends(require_role("admin"))`. Las dependencias corren antes que la ruta, así el demo recibe 403 aunque el id no exista o el cuerpo sea inválido.
+- **Búsqueda `q`** (2–100 caracteres; vacía = sin búsqueda): `name ILIKE '%q%' OR email ILIKE '%q%'`, más `dígitos(phone) LIKE '%dígitos%'` **solo si `q` parece un teléfono** (solo dígitos, espacios y `+ ( ) - .`, con ≥ 3 dígitos): así `555-0142` encuentra `(305) 555-0142`, y `ana` o `4b1c2a9f` no buscan en el teléfono. `%`, `_` y `\` se escapan (buscar `100%` no es un comodín). Los valores siempre van como parámetros enlazados de SQLAlchemy, nunca concatenados (inyección SQL). Las tres ramas usan su índice GIN de trigramas (`BitmapOr`, §2.4); `tests/test_search_explain.py` lo verifica con `EXPLAIN` sobre 20 000 filas sintéticas.
+- **`sort`**: lista blanca (`created_at`, `-created_at`, `preferred_date`, `-preferred_date`) mapeada a columnas con un diccionario fijo, con el `id` como desempate (sin él, filas con la misma fecha podrían repetirse o saltarse entre páginas). Cualquier otro valor da 422. Los parámetros de la lista son un modelo Pydantic con `extra="forbid"`: un parámetro desconocido también da 422. Una página fuera de rango devuelve `items: []` con el `total` real.
+- **Cambio de estado**: se permite cualquier transición (el negocio puede retroceder, p. ej. `scheduled` → `contacted`), excepto al mismo estado, que responde **409** sin guardar nada (en vez de un 200 "sin cambios": el panel se entera de que no pasó nada, quizá porque otro admin ya lo cambió, y el historial no registra cambios vacíos; además lo exige el `CHECK (from_status <> to_status)`). `SELECT … FOR UPDATE` (con `populate_existing` para releer la fila tras esperar el bloqueo), luego `UPDATE` de la cotización e `INSERT` del historial con **un solo `commit()`**: o se guardan los dos o ninguno (probado forzando un fallo en el `INSERT`). Si dos admins cambian el estado a la vez, el segundo espera y el historial registra el `from_status` correcto.
+- **Notas**: el cuerpo se recorta; vacío o de más de 2000 caracteres → 422 (`NOTE_BODY_MAX` en `models/base.py`, el mismo del `CHECK`). La nota hereda el `is_demo` de su cotización.
+- **Métricas**: `by_status` y `by_service` incluyen todas las claves aunque valgan 0; `last_30_days` usa `generate_series` + `LEFT JOIN` para que los días sin cotizaciones aparezcan con `count: 0` (si no, la gráfica tendría huecos). El filtro `is_demo` va en el `ON` y no en el `WHERE` (en el `WHERE` descartaría los días vacíos). Cada día es el rango `[00:00, 00:00 del día siguiente)` en `BUSINESS_TIMEZONE` convertido a instantes (`AT TIME ZONE`), sin depender de la zona de la sesión de PostgreSQL: usa el índice `(is_demo, created_at)` y respeta el cambio de horario.
+- **Errores documentados**: `schemas/errors.py` define las respuestas 401/403/404/409/413/429 (con su ejemplo `{"detail": …}`) y cada ruta las declara en `responses=`, así `/docs` no muestra códigos "Undocumented". `tests/test_openapi_docs.py` exige la lista exacta de códigos de cada ruta.
 - **Documentación automática** (`/docs`, `/openapi.json`) activa en desarrollo y desactivada en producción.
 
 ---
@@ -343,7 +348,7 @@ Detalles de comportamiento:
 
 | Acción | admin | demo |
 |---|---|---|
-| Ver lista, detalle, métricas | ✅ datos reales | ✅ solo datos ficticios |
+| Ver lista, detalle, métricas | ✅ solo datos reales | ✅ solo datos ficticios |
 | Cambiar estado, agregar notas | ✅ | ❌ 403 |
 
 - Implementado con dependencias de FastAPI en `app/deps.py`: `user: Annotated[User, Depends(get_current_user)]` en toda ruta privada, y `Depends(require_role("admin"))` en las de escritura (responde **403**: se sabe quién es, pero no tiene permiso). `get_current_user` lee el token con `HTTPBearer(auto_error=False)`, que además agrega el botón *Authorize* en `/docs`. Todos los 401 llevan el mismo mensaje (`"Could not validate credentials."`) y no dicen qué falló.
@@ -429,7 +434,7 @@ fernwick-platform/
 │   │   ├── security.py        # Hash de contraseñas (pwdlib) y JWT (PyJWT)
 │   │   ├── deps.py            # get_current_user, require_role, get_db_for_user
 │   │   ├── models/            # Modelos SQLAlchemy 2.0 (Mapped[...]): base.py, user.py, quote.py, note.py, status_change.py
-│   │   ├── schemas/           # Esquemas Pydantic de entrada/salida
+│   │   ├── schemas/           # Esquemas Pydantic de entrada/salida (quote, auth, metrics, errors)
 │   │   ├── routers/           # health.py, public.py, auth.py, quotes.py, metrics.py
 │   │   ├── services/          # Lógica de negocio y consultas (quotes.py, auth.py, metrics.py)
 │   │   └── cli.py             # create-admin, seed-demo
@@ -465,7 +470,7 @@ fernwick-platform/
 - **routers → services → models.** Los routers solo traducen HTTP (validar entrada, códigos de estado); la lógica y las consultas viven en `services/`, que se pueden probar sin HTTP. Para un proyecto de este tamaño no se agrega una capa extra de "repositorios".
 - **SQLAlchemy síncrono** (no `async`): FastAPI ejecuta las rutas `def` en un pool de hilos, el tráfico esperado es mínimo y el código síncrono es más fácil de aprender y probar. Pasar a `async` más adelante es un cambio localizado en `db.py` y los servicios.
 - **Panel:** React Router para las páginas; `fetch` nativo (sin axios). Para las gráficas se propondrá una librería (p. ej. Recharts) o barras simples hechas con Tailwind; se decide en la fase 8 con aprobación, como cualquier dependencia nueva.
-- **Tests de la API** contra una base PostgreSQL real `fernwick_test` (no SQLite): RLS, `pg_trgm` y `generate_series` no existen en SQLite, y lo que queremos probar es justamente eso. Cada test corre dentro de una transacción que se revierte al final.
+- **Tests de la API**: fixtures en `tests/conftest.py` (`db_session`, `client`, `admin`, `demo`) y funciones de apoyo en `tests/helpers.py` (`bearer`, `make_quote`, `local`). Corren contra una base PostgreSQL real `fernwick_test` (no SQLite): RLS, `pg_trgm` y `generate_series` no existen en SQLite, y lo que queremos probar es justamente eso. Cada test corre dentro de una transacción que se revierte al final.
 
 ---
 
