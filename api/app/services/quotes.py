@@ -186,3 +186,16 @@ def change_status(session: Session, actor: User, quote_id: int, new_status: str)
         session.rollback()
         raise
     return get_quote(session, actor, quote_id)
+
+
+def add_note(session: Session, author: User, quote_id: int, body: str) -> QuoteNote | None:
+    """Agrega una nota interna. None si la cotización no existe o no es visible para `author`."""
+    quote = session.scalar(select(Quote).where(Quote.id == quote_id, _visible_to(author)))
+    if quote is None:
+        return None
+    # La nota hereda el is_demo de su cotización (la FK compuesta lo exige)
+    note = QuoteNote(quote_id=quote.id, is_demo=quote.is_demo, author_id=author.id, body=body)
+    session.add(note)
+    session.commit()
+    session.refresh(note)  # id y created_at los asigna PostgreSQL
+    return note

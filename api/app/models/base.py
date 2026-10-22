@@ -38,6 +38,8 @@ EMAIL_MAX = 254  # máximo práctico de una dirección de email (RFC 5321)
 PHONE_MAX = 30
 PHONE_MIN_DIGITS = 10
 MESSAGE_MAX = 500
+# Notas internas del panel
+NOTE_BODY_MAX = 2000
 
 # Formato mínimo de email: algo@algo, sin espacios. Rechaza también el texto vacío.
 # La validación completa (dominio, etc.) la hará Pydantic; la base solo impide basura evidente.

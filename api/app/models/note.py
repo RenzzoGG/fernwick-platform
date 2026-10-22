@@ -14,7 +14,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base
+from app.models.base import NOTE_BODY_MAX, Base
 
 if TYPE_CHECKING:
     from app.models.quote import Quote
@@ -31,7 +31,7 @@ class QuoteNote(Base):
         ForeignKeyConstraint(
             ["quote_id", "is_demo"], ["quotes.id", "quotes.is_demo"], ondelete="CASCADE"
         ),
-        CheckConstraint("char_length(body) BETWEEN 1 AND 2000", name="body_longitud"),
+        CheckConstraint(f"char_length(body) BETWEEN 1 AND {NOTE_BODY_MAX}", name="body_longitud"),
         Index("ix_quote_notes_quote_id_created_at", "quote_id", "created_at"),
     )
 

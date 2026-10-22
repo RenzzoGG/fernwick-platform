@@ -14,6 +14,7 @@ EXPECTED = {
     ("get", "/v1/quotes"): {"200", "401", "422"},
     ("get", "/v1/quotes/{quote_id}"): {"200", "401", "404", "422"},
     ("patch", "/v1/quotes/{quote_id}/status"): {"200", "401", "403", "404", "409", "422"},
+    ("post", "/v1/quotes/{quote_id}/notes"): {"201", "401", "403", "404", "422"},
 }
 
 

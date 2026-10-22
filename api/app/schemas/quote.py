@@ -15,6 +15,7 @@ from app.models.base import (
     MESSAGE_MAX,
     NAME_MAX,
     NAME_MIN,
+    NOTE_BODY_MAX,
     PHONE_MAX,
     PHONE_MIN_DIGITS,
     QUOTE_STATUSES,
@@ -217,3 +218,12 @@ class StatusUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: QuoteStatus
+
+
+class NoteCreate(BaseModel):
+    """Cuerpo de POST /v1/quotes/{id}/notes."""
+
+    # Se recortan los espacios: una nota de puros espacios queda vacía y da 422
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    body: str = Field(min_length=1, max_length=NOTE_BODY_MAX)

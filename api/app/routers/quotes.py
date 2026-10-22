@@ -14,13 +14,21 @@ from app.deps import get_current_user, require_role
 from app.models import User
 from app.schemas.errors import FORBIDDEN, QUOTE_NOT_FOUND, STATUS_CONFLICT, UNAUTHORIZED
 from app.schemas.quote import (
+    NoteCreate,
+    NoteOut,
     QuoteDetail,
     QuoteListParams,
     QuotePage,
     QuoteSummary,
     StatusUpdate,
 )
-from app.services.quotes import StatusUnchangedError, change_status, get_quote, list_quotes
+from app.services.quotes import (
+    StatusUnchangedError,
+    add_note,
+    change_status,
+    get_quote,
+    list_quotes,
+)
 
 # responses a nivel de router: todas las rutas exigen token y pueden responder 401
 router = APIRouter(prefix="/v1/quotes", tags=["quotes"], responses=UNAUTHORIZED)
@@ -84,3 +92,21 @@ def update_quote_status(
     if quote is None:
         raise _not_found()
     return QuoteDetail.from_quote(quote)
+
+
+@router.post(
+    "/{quote_id}/notes",
+    status_code=201,
+    response_model=NoteOut,
+    responses={**FORBIDDEN, **QUOTE_NOT_FOUND},
+)
+def create_note(
+    quote_id: QuoteId,
+    data: NoteCreate,
+    user: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> NoteOut:
+    note = add_note(db, user, quote_id, data.body)
+    if note is None:
+        raise _not_found()
+    return NoteOut.from_note(note)
