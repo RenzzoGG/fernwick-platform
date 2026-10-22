@@ -7,6 +7,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
 
+# Roles de PostgreSQL con los que trabaja la API (los crea la migración 0003, DESIGN §3)
+APP_ROLE = "fernwick_app"
+DEMO_ROLE = "fernwick_demo"
+
 # El engine se crea una vez por proceso y administra un pool de conexiones.
 # pool_pre_ping: antes de prestar una conexión del pool comprueba que siga viva
 # (p. ej. si PostgreSQL se reinició), y si no, abre una nueva.

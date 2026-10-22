@@ -1,9 +1,12 @@
 """Funciones de apoyo compartidas por las pruebas (las fixtures están en conftest.py)."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, time, timedelta, timezone
 from itertools import count
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -45,3 +48,16 @@ def make_quote(session: Session, **overrides) -> Quote:
     session.add(quote)
     session.flush()
     return quote
+
+
+@contextmanager
+def como_rol(session: Session, role: str) -> Iterator[None]:
+    """Ejecuta el bloque con SET LOCAL ROLE `role` y luego vuelve al rol de la conexión (dueño).
+
+    `role` es siempre una constante de las pruebas: un nombre de rol no puede ir como parámetro.
+    """
+    session.execute(text(f"SET LOCAL ROLE {role}"))
+    try:
+        yield
+    finally:
+        session.execute(text("RESET ROLE"))

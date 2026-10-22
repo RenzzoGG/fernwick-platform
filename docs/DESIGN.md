@@ -220,15 +220,31 @@ Esta es la decisión central de seguridad para la cuenta demo. La idea: **que au
 
 ### 3.1 Tres roles de PostgreSQL
 
-| Rol | Puede iniciar sesión | Para qué | Permisos |
-|---|---|---|---|
-| Dueño (`postgres` en Railway / tu usuario local) | sí | Solo migraciones (Alembic) y seed demo | Dueño de las tablas |
-| `fernwick_app` | sí | La API en tiempo de ejecución | `SELECT, INSERT, UPDATE` en las tablas; `DELETE` en ninguna; uso de las secuencias |
-| `fernwick_demo` | **no** (`NOLOGIN`) | Peticiones de usuarios demo | Solo `SELECT` en las tablas de cotizaciones; `SELECT (id, email)` en `users` |
+Los crea la migración `0003` (`alembic/versions/2026_10_21-0003_roles_y_rls.py`).
 
-- `fernwick_app` **no** es superusuario ni tiene `BYPASSRLS` (los superusuarios y los roles con `BYPASSRLS` ignoran RLS siempre). Por eso la API **no** usa el usuario `postgres` que Railway da por defecto.
-- `GRANT fernwick_demo TO fernwick_app`: la API puede "ponerse el sombrero" demo con `SET LOCAL ROLE fernwick_demo`, pero el demo no puede hacer nada que `fernwick_app` no le haya dado.
-- Los roles de PostgreSQL son **del clúster**, no de una base: `fernwick` y `fernwick_test` comparten los mismos roles. La migración los crea si no existen (bloque `DO $$ … IF NOT EXISTS … $$`), **sin contraseña**; la contraseña de `fernwick_app` se pone a mano una sola vez con `ALTER ROLE fernwick_app PASSWORD '…'` y vive solo en la variable `DATABASE_URL`. Nunca en el código ni en una migración.
+| Rol | Puede iniciar sesión | Para qué | Atributos |
+|---|---|---|---|
+| Dueño (`postgres` en Railway / `renzzo` en local) | sí | Solo migraciones (Alembic), `seed-demo` y los fixtures de las pruebas | Dueño de las tablas. Salta RLS: `postgres` por ser superusuario; `renzzo` porque tiene `BYPASSRLS` (y `CREATEROLE` para crear los roles) |
+| `fernwick_app` | sí | La API en tiempo de ejecución | `NOSUPERUSER NOBYPASSRLS`, no es dueño de nada |
+| `fernwick_demo` | **no** (`NOLOGIN`) | Peticiones de usuarios demo | `NOSUPERUSER NOBYPASSRLS`, no es dueño de nada |
+
+Permisos mínimos (`GRANT`). **Ningún rol tiene `DELETE`**; `UPDATE` solo en las columnas que la API cambia:
+
+| Tabla | `fernwick_app` | `fernwick_demo` |
+|---|---|---|
+| `quotes` | `SELECT, INSERT, UPDATE (status, updated_at)` | `SELECT` |
+| `quote_notes`, `quote_status_changes` | `SELECT, INSERT` | `SELECT` |
+| `users` | `SELECT, INSERT` (create-admin), `UPDATE (last_login_at, password_hash)` (login) | `SELECT (id, email)`: **nunca** `password_hash` |
+| secuencia `quotes_id_seq` | `USAGE` (el `nextval()` del honeypot) | — |
+| `alembic_version` | — | — |
+
+- Las columnas `IDENTITY` no necesitan permiso sobre su secuencia para un `INSERT`; solo el `nextval()` explícito del honeypot lo necesita.
+- `SELECT … FOR UPDATE` exige `UPDATE` en al menos una columna: lo cubre `UPDATE (status, updated_at)`.
+- `fernwick_app` **no** es superusuario ni tiene `BYPASSRLS` (los superusuarios y los roles con `BYPASSRLS` ignoran RLS siempre), ni es dueño de las tablas (el dueño salta RLS salvo `FORCE`, y además puede desactivarlo). Por eso la API **no** usa el usuario `postgres` que Railway da por defecto. La migración falla con un error claro si encuentra estos roles con `SUPERUSER` o `BYPASSRLS`.
+- **Membresías** (con las opciones de PostgreSQL 16+):
+  - `GRANT fernwick_demo TO fernwick_app WITH INHERIT FALSE, SET TRUE`: la API puede "ponerse el sombrero" demo con `SET LOCAL ROLE fernwick_demo`, pero **no hereda** sus permisos ni sus políticas. `INHERIT FALSE` es imprescindible: las políticas aplican al rol nombrado **y a los miembros que heredan de él**. Con `INHERIT TRUE`, la política `quotes_demo` (`USING (is_demo)`) también le aplicaría a `fernwick_app` y, sumada con `OR` a `quotes_app` (`USING (NOT is_demo)`), la API vería **todas** las filas. (Lo detectaron las pruebas de la fase 6; `test_db_roles.py` y `test_rls.py` lo vigilan.)
+  - `GRANT fernwick_app TO <dueño> WITH INHERIT FALSE, SET TRUE`: el dueño puede hacer `SET ROLE fernwick_app` (pruebas, revisión con psql) sin heredar nada.
+- Los roles de PostgreSQL son **del clúster**, no de una base: `fernwick` y `fernwick_test` comparten los mismos roles. La migración los crea si no existen (bloque `DO $$ … IF NOT EXISTS … $$`), **sin contraseña**, y su `downgrade` no los borra (la otra base los sigue usando). La contraseña de `fernwick_app` solo hace falta en Railway; se pone a mano una sola vez con `\password fernwick_app` en psql y vive solo en la variable `DATABASE_URL`. Nunca en el código ni en una migración.
 
 ### 3.2 Políticas
 
@@ -243,15 +259,20 @@ CREATE POLICY quotes_app ON quotes FOR ALL TO fernwick_app
 -- El demo: solo lectura, solo filas demo
 CREATE POLICY quotes_demo ON quotes FOR SELECT TO fernwick_demo
     USING (is_demo);
+
+-- users: la app ve todos (login, autores); el demo solo los usuarios demo
+CREATE POLICY users_app ON users FOR ALL TO fernwick_app USING (true) WITH CHECK (true);
+CREATE POLICY users_demo ON users FOR SELECT TO fernwick_demo USING (role = 'demo');
 ```
 
-Lo mismo para `quote_notes` y `quote_status_changes`. Detalles:
+Lo mismo que en `quotes` para `quote_notes` y `quote_status_changes`. Detalles:
 
 - **RLS es "denegar por defecto":** si ninguna política aplica a un rol, ese rol ve **cero filas**. Por eso un rol nuevo no ve nada hasta que se le dé una política.
 - **`USING`** filtra qué filas se pueden leer/actualizar/borrar; **`WITH CHECK`** valida las filas que se escriben. Con `WITH CHECK (NOT is_demo)`, ni siquiera un bug en la API puede crear una cotización demo desde el formulario público.
-- **`FORCE`** hace que RLS aplique también al dueño de la tabla (excepto si es superusuario). Es un seguro por si algún día la API se conecta con el rol dueño por error.
-- La política de `fernwick_app` no la "hereda" `fernwick_demo`: las políticas aplican al rol nombrado **y a sus miembros**, y `fernwick_demo` no es miembro de `fernwick_app` (es al revés).
-- El **seed demo** lo ejecuta el dueño (superusuario en Railway, que salta RLS), así que puede insertar filas con `is_demo = true`.
+- El demo queda **doblemente** sin escritura: no tiene `GRANT` de `INSERT/UPDATE/DELETE` ni ninguna política que no sea `FOR SELECT`.
+- **`users_demo`**: el demo ni siquiera ve el email de los admins. Sus notas e historial los firma el propio usuario demo (`seed-demo`), así que el detalle no necesita más.
+- **`FORCE`** hace que RLS aplique también al dueño de la tabla, salvo que sea superusuario o tenga `BYPASSRLS`. Hoy no cambia nada (los dos dueños, `postgres` y `renzzo`, saltan RLS a propósito para migrar y sembrar), pero es un cinturón gratis: si algún día el dueño es un rol sin `BYPASSRLS`, usarlo por error para la API falla cerrado (cero filas).
+- El **seed demo** lo ejecuta el dueño (`MIGRATIONS_DATABASE_URL`), que salta RLS, así que puede insertar filas con `is_demo = true`.
 
 ### 3.3 Cómo lo usa la API en cada petición
 

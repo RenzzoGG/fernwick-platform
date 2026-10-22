@@ -40,3 +40,20 @@ def test_downgrade_y_upgrade_son_reversibles(alembic_config):
 
     command.upgrade(alembic_config, "head")
     assert tablas_actuales() == TABLAS
+
+
+def test_downgrade_de_rls_conserva_los_roles(alembic_config):
+    # Los roles son del clúster: la otra base (fernwick o fernwick_test) los sigue usando
+    command.downgrade(alembic_config, "0002")
+    with engine.connect() as conn:
+        politicas = conn.scalar(text("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'"))
+        rls = conn.scalar(text("SELECT bool_or(relrowsecurity) FROM pg_class WHERE relname = 'quotes'"))
+        roles = set(conn.scalars(text(
+            "SELECT rolname FROM pg_roles WHERE rolname IN ('fernwick_app', 'fernwick_demo')"
+        )))
+    assert (politicas, rls) == (0, False)
+    assert roles == {"fernwick_app", "fernwick_demo"}
+
+    command.upgrade(alembic_config, "head")
+    with engine.connect() as conn:
+        assert conn.scalar(text("SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")) == 8
