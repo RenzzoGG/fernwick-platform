@@ -14,6 +14,10 @@ from app.models import Quote, QuoteNote, QuoteStatusChange, User
 from app.models.quote import PHONE_DIGITS
 from app.schemas.quote import PublicQuoteCreate, QuoteListParams
 
+class StatusUnchangedError(Exception):
+    """Se pidió cambiar al estado que la cotización ya tiene (la API responde 409)."""
+
+
 # Mínimo de dígitos para buscar también en el teléfono (con menos no hay trigramas que usar)
 PHONE_SEARCH_MIN_DIGITS = 3
 
@@ -131,6 +135,9 @@ def get_quote(session: Session, viewer: User, quote_id: int) -> Quote | None:
     return session.scalar(
         select(Quote)
         .where(Quote.id == quote_id, _visible_to(viewer))
+        # populate_existing: si la cotización ya estaba en la sesión (p. ej. justo después de
+        # cambiar su estado), se reemplazan sus datos y colecciones por los de la base
+        .execution_options(populate_existing=True)
         # selectinload: una consulta por colección (WHERE quote_id IN ...) en vez de una por
         # fila al recorrerlas (el problema "N+1"); también trae a los autores
         .options(
@@ -138,3 +145,44 @@ def get_quote(session: Session, viewer: User, quote_id: int) -> Quote | None:
             selectinload(Quote.status_changes).selectinload(QuoteStatusChange.changed_by_user),
         )
     )
+
+
+def change_status(session: Session, actor: User, quote_id: int, new_status: str) -> Quote | None:
+    """Cambia el estado y registra el cambio en el historial, en UNA transacción.
+
+    Devuelve la cotización actualizada, o None si no existe o no es visible para `actor`.
+    Lanza StatusUnchangedError si ya tenía ese estado (no se guarda nada).
+    """
+    quote = session.scalar(
+        select(Quote)
+        .where(Quote.id == quote_id, _visible_to(actor))
+        # FOR UPDATE bloquea la fila hasta el commit: si dos admins cambian el estado a la vez,
+        # el segundo espera aquí y luego lee el estado que dejó el primero
+        .with_for_update()
+        # Tras esperar el bloqueo hay que usar lo que dice la base, no lo que la sesión
+        # tuviera en memoria de antes
+        .execution_options(populate_existing=True)
+    )
+    if quote is None:
+        return None
+    if quote.status == new_status:
+        session.rollback()  # termina la transacción y libera el bloqueo
+        raise StatusUnchangedError
+
+    try:
+        quote.status_changes.append(
+            QuoteStatusChange(
+                from_status=quote.status,
+                to_status=new_status,
+                changed_by=actor.id,
+                is_demo=quote.is_demo,  # el historial hereda el is_demo de su cotización
+            )
+        )
+        quote.status = new_status
+        # Un solo commit para el UPDATE de quotes y el INSERT del historial: o se guardan
+        # los dos o ninguno
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return get_quote(session, actor, quote_id)

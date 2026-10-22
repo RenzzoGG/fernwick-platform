@@ -10,11 +10,17 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.deps import get_current_user
+from app.deps import get_current_user, require_role
 from app.models import User
-from app.schemas.errors import QUOTE_NOT_FOUND, UNAUTHORIZED
-from app.schemas.quote import QuoteDetail, QuoteListParams, QuotePage, QuoteSummary
-from app.services.quotes import get_quote, list_quotes
+from app.schemas.errors import FORBIDDEN, QUOTE_NOT_FOUND, STATUS_CONFLICT, UNAUTHORIZED
+from app.schemas.quote import (
+    QuoteDetail,
+    QuoteListParams,
+    QuotePage,
+    QuoteSummary,
+    StatusUpdate,
+)
+from app.services.quotes import StatusUnchangedError, change_status, get_quote, list_quotes
 
 # responses a nivel de router: todas las rutas exigen token y pueden responder 401
 router = APIRouter(prefix="/v1/quotes", tags=["quotes"], responses=UNAUTHORIZED)
@@ -22,6 +28,9 @@ router = APIRouter(prefix="/v1/quotes", tags=["quotes"], responses=UNAUTHORIZED)
 # Ids válidos de una columna bigint: uno mayor haría fallar a PostgreSQL (500) en vez de dar 422
 BIGINT_MAX = 2**63 - 1
 QuoteId = Annotated[int, Path(ge=1, le=BIGINT_MAX)]
+# Escrituras: solo admin. La dependencia corre antes que la ruta, así el demo recibe 403
+# aunque el id no exista (no aprende nada sobre qué ids hay)
+AdminUser = Annotated[User, Depends(require_role("admin"))]
 
 
 def _not_found() -> HTTPException:
@@ -52,6 +61,26 @@ def get_quote_detail(
     db: Annotated[Session, Depends(get_db)],
 ) -> QuoteDetail:
     quote = get_quote(db, user, quote_id)
+    if quote is None:
+        raise _not_found()
+    return QuoteDetail.from_quote(quote)
+
+
+@router.patch(
+    "/{quote_id}/status",
+    response_model=QuoteDetail,
+    responses={**FORBIDDEN, **QUOTE_NOT_FOUND, **STATUS_CONFLICT},
+)
+def update_quote_status(
+    quote_id: QuoteId,
+    data: StatusUpdate,
+    user: AdminUser,
+    db: Annotated[Session, Depends(get_db)],
+) -> QuoteDetail:
+    try:
+        quote = change_status(db, user, quote_id, data.status)
+    except StatusUnchangedError:
+        raise HTTPException(status_code=409, detail="Quote already has this status.") from None
     if quote is None:
         raise _not_found()
     return QuoteDetail.from_quote(quote)

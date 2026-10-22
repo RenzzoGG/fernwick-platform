@@ -209,3 +209,11 @@ class QuoteDetail(QuoteSummary):
             notes=[NoteOut.from_note(note) for note in quote.notes],
             status_history=[StatusChangeOut.from_change(c) for c in quote.status_changes],
         )
+
+
+class StatusUpdate(BaseModel):
+    """Cuerpo de PATCH /v1/quotes/{id}/status."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: QuoteStatus
