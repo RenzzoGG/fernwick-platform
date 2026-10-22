@@ -1,9 +1,11 @@
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
-from app.cli import DEMO_EMAIL, DEMO_QUOTE_COUNT, seed_demo
+from app.cli import DEMO_EMAIL, DEMO_QUOTE_COUNT, SERVICE_WEIGHTS, seed_demo
 from app.models import Quote, QuoteNote, QuoteStatusChange, User
+from app.models.base import SERVICES
 from tests.test_models import make_quote
 
 NOW = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc)
@@ -49,3 +51,21 @@ def test_seed_genera_historial_coherente_y_fechas_recientes(db_session):
     # Hay variedad para el tablero: varios estados y cotizaciones en los últimos 30 días
     assert len({q.status for q in quotes}) == 4
     assert any(q.created_at >= NOW - timedelta(days=30) for q in quotes)
+
+
+def test_seed_reparte_servicios_de_forma_realista(db_session):
+    seed_demo(db_session, now=NOW)
+    quotes = db_session.scalars(select(Quote).where(Quote.is_demo)).all()
+    por_servicio = Counter(q.service for q in quotes)
+
+    # Proporción exacta de SERVICE_WEIGHTS: 35/25/20/12/5/3 % de 40
+    assert por_servicio == {
+        "standard": 14, "recurring": 10, "deep": 8, "move": 5, "office": 2, "post-renovation": 1,
+    }
+    # Tamaño coherente con el servicio
+    for quote in quotes:
+        assert (quote.home_size == "office") == (quote.service == "office")
+
+
+def test_todo_servicio_tiene_peso_en_el_seed():
+    assert set(SERVICE_WEIGHTS) == set(SERVICES)

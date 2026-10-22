@@ -56,6 +56,19 @@ NOTES = {
         "Completed and invoiced. Offered a recurring plan.",
     ],
 }
+# Peso (porcentaje) de cada servicio en los datos demo (reparto realista: la mayoría pide limpiezas
+# normales, recurrentes o profundas; post-obra y oficinas son poco frecuentes).
+# Van por nombre y no por posición: si se agrega un servicio sin peso, falla con KeyError.
+SERVICE_WEIGHTS = {
+    "standard": 35,
+    "recurring": 25,
+    "deep": 20,
+    "move": 12,
+    "office": 5,
+    "post-renovation": 3,
+}
+# Tamaños de vivienda (todos menos "office", que solo corresponde al servicio de oficinas)
+HOME_ONLY_SIZES = [size for size in HOME_SIZES if size != "office"]
 # Caminos de estados posibles hasta cada estado final
 STATUS_PATHS = {
     "new": [[]],
@@ -74,6 +87,31 @@ def _pick_status(rng: random.Random, days_ago: int) -> str:
     else:
         weights = [5, 10, 25, 60]
     return rng.choices(["new", "contacted", "scheduled", "closed"], weights=weights)[0]
+
+
+def _service_list(rng: random.Random, count: int) -> list[str]:
+    """Lista de `count` servicios en la proporción exacta de SERVICE_WEIGHTS, en orden aleatorio.
+
+    No se sortea cada servicio por separado: con solo 40 cotizaciones el azar podría dejar,
+    p. ej., más "recurring" que "standard". Se reparte con el método del mayor resto:
+    cada servicio recibe la parte entera de su cuota y las cotizaciones que sobran van a
+    los de mayor fracción, así la suma da exactamente `count`.
+    """
+    total = sum(SERVICE_WEIGHTS[service] for service in SERVICES)
+    quotas = {service: SERVICE_WEIGHTS[service] * count / total for service in SERVICES}
+    counts = {service: int(quota) for service, quota in quotas.items()}
+    leftover = count - sum(counts.values())
+    for service in sorted(SERVICES, key=lambda s: quotas[s] - counts[s], reverse=True)[:leftover]:
+        counts[service] += 1
+
+    services = [service for service in SERVICES for _ in range(counts[service])]
+    rng.shuffle(services)
+    return services
+
+
+def _pick_home_size(rng: random.Random, service: str) -> str:
+    # Una oficina se cotiza como "office"; una casa nunca tiene tamaño "office"
+    return "office" if service == "office" else rng.choice(HOME_ONLY_SIZES)
 
 
 def _ensure_demo_user(session: Session) -> int:
@@ -96,6 +134,10 @@ def seed_demo(session: Session, now: datetime | None = None) -> dict[str, int]:
     """
     now = now or datetime.now(timezone.utc)
     rng = random.Random(RANDOM_SEED)
+    # Generador aparte para servicio y tamaño: cambiar sus pesos no altera el resto de los
+    # datos (nombres, fechas, estados), que siguen saliendo de `rng`
+    service_rng = random.Random(RANDOM_SEED + 1)
+    services = _service_list(service_rng, DEMO_QUOTE_COUNT)
     demo_user_id = _ensure_demo_user(session)
 
     # Borra solo las filas demo. ON DELETE CASCADE elimina también sus notas e historial.
@@ -107,14 +149,16 @@ def seed_demo(session: Session, now: datetime | None = None) -> dict[str, int]:
         days_ago = rng.randint(0, 59)
         created_at = now - timedelta(days=days_ago, hours=rng.randint(0, 23), minutes=rng.randint(0, 59))
         final_status = _pick_status(rng, days_ago)
+        service = services[i]
+        home_size = _pick_home_size(service_rng, service)
 
         quote = Quote(
             name=f"{first} {last}",
             email=f"{first}.{last}{i}@example.com".lower(),
             # 555-0100 a 555-0199: rango reservado para números ficticios en EE. UU.
             phone=f"({rng.choice(AREA_CODES)}) 555-01{rng.randint(0, 99):02d}",
-            service=rng.choice(SERVICES),
-            home_size=rng.choice(HOME_SIZES),
+            service=service,
+            home_size=home_size,
             preferred_date=(created_at + timedelta(days=rng.randint(2, 21))).date(),
             message=rng.choice(MESSAGES),
             status=final_status,
