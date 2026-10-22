@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.config import get_settings
+from app.models import Quote, QuoteNote, QuoteStatusChange
 from app.models.base import (
     EMAIL_MAX,
     HOME_SIZES,
@@ -156,3 +157,55 @@ class QuotePage(BaseModel):
     total: int  # filas que cumplen los filtros, en todas las páginas
     page: int
     page_size: int
+
+
+class NoteOut(BaseModel):
+    id: int
+    body: str
+    author_email: str | None  # None si el autor fue eliminado
+    created_at: UtcDatetime
+
+    @classmethod
+    def from_note(cls, note: QuoteNote) -> "NoteOut":
+        return cls(
+            id=note.id,
+            body=note.body,
+            author_email=note.author.email if note.author else None,
+            created_at=note.created_at,
+        )
+
+
+class StatusChangeOut(BaseModel):
+    from_status: str
+    to_status: str
+    changed_by_email: str | None
+    changed_at: UtcDatetime
+
+    @classmethod
+    def from_change(cls, change: QuoteStatusChange) -> "StatusChangeOut":
+        return cls(
+            from_status=change.from_status,
+            to_status=change.to_status,
+            changed_by_email=change.changed_by_user.email if change.changed_by_user else None,
+            changed_at=change.changed_at,
+        )
+
+
+class QuoteDetail(QuoteSummary):
+    """Detalle de una cotización: los datos de la lista más mensaje, notas e historial."""
+
+    message: str | None
+    updated_at: UtcDatetime
+    notes: list[NoteOut]
+    status_history: list[StatusChangeOut]
+
+    @classmethod
+    def from_quote(cls, quote: Quote) -> "QuoteDetail":
+        summary = QuoteSummary.model_validate(quote)
+        return cls(
+            **summary.model_dump(),
+            message=quote.message,
+            updated_at=quote.updated_at,
+            notes=[NoteOut.from_note(note) for note in quote.notes],
+            status_history=[StatusChangeOut.from_change(c) for c in quote.status_changes],
+        )

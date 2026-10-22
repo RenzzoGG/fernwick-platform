@@ -78,13 +78,13 @@ class Quote(Base):
         back_populates="quote",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="QuoteNote.created_at",
+        order_by="[QuoteNote.created_at, QuoteNote.id]",
     )
     status_changes: Mapped[list["QuoteStatusChange"]] = relationship(
         back_populates="quote",
         cascade="all, delete-orphan",
         passive_deletes=True,
-        order_by="QuoteStatusChange.changed_at",
+        order_by="[QuoteStatusChange.changed_at, QuoteStatusChange.id]",
     )
 
 

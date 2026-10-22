@@ -8,9 +8,9 @@ ruta puede pedir filas "sin filtro": el filtro no vive en los routers, vive aqu�
 from datetime import datetime
 
 from sqlalchemy import ColumnElement, func, or_, select, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.models import Quote, User
+from app.models import Quote, QuoteNote, QuoteStatusChange, User
 from app.models.quote import PHONE_DIGITS
 from app.schemas.quote import PublicQuoteCreate, QuoteListParams
 
@@ -119,3 +119,22 @@ def fake_quote_receipt(session: Session) -> tuple[int, datetime]:
     # Cierra la transacción que abrió la consulta (nextval no se revierte con rollback)
     session.commit()
     return row[0], row[1]
+
+
+def get_quote(session: Session, viewer: User, quote_id: int) -> Quote | None:
+    """La cotización con sus notas e historial, o None si no existe o no es visible.
+
+    Para el que pregunta, "no existe" y "no es tuya" son lo mismo: así el demo no puede
+    averiguar qué ids reales hay. Notas e historial comparten el is_demo de su cotización
+    (lo garantiza la FK compuesta), así que no necesitan otro filtro.
+    """
+    return session.scalar(
+        select(Quote)
+        .where(Quote.id == quote_id, _visible_to(viewer))
+        # selectinload: una consulta por colección (WHERE quote_id IN ...) en vez de una por
+        # fila al recorrerlas (el problema "N+1"); también trae a los autores
+        .options(
+            selectinload(Quote.notes).selectinload(QuoteNote.author),
+            selectinload(Quote.status_changes).selectinload(QuoteStatusChange.changed_by_user),
+        )
+    )
