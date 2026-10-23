@@ -560,10 +560,12 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 | Servicio | Origen | Configuración |
 |---|---|---|
 | **Postgres** | Plantilla PostgreSQL de Railway | Volumen persistente. Elegir la versión mayor más cercana a la local (PostgreSQL 18; **mínimo 16**, por `GRANT … WITH INHERIT FALSE, SET TRUE` de la migración `0003`) y verificar compatibilidad con `pg_trgm`. |
-| **api** | Este repo, *Root Directory* `api/` | Railpack (Python). Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers` (la IP real la decide la app según `CLIENT_IP_HEADER`, §5.5). *Pre-deploy command*: `alembic upgrade head` (si la migración falla, no se publica la versión nueva). *Healthcheck*: `/health`. *Watch paths*: `api/**`. |
-| **admin** | Este repo, *Root Directory* `admin/` | Railpack (Node) con `npm ci` + `npm run build`, servido como sitio estático con Caddy: `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci` (igual que la landing). *Watch paths*: `admin/**`. `VITE_API_URL` definida antes del build. |
+| **api** | Este repo, *Root Directory* `api/` | Railpack (Python). Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers` (la IP real la decide la app según `CLIENT_IP_HEADER`, §5.5). *Pre-deploy command*: `alembic upgrade head` (si la migración falla, no se publica la versión nueva). *Healthcheck*: `/health` (120 s). Reinicio `ON_FAILURE` (3 intentos). *Watch paths*: `/api/**`. Todo en `api/railway.json`. |
+| **admin** | Este repo, *Root Directory* `admin/` | Railpack (Node) con `npm ci` + `npm run build`, servido como sitio estático con Caddy: `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci` (igual que la landing). *Watch paths*: `/admin/**` (`admin/railway.json`, **sin** start command: con uno, Railpack lo trataría como app de Node y no serviría `dist/`). Caddy responde `index.html` en las rutas que no son archivos, así recargar `/quotes/42` funciona con React Router. `VITE_API_URL` definida antes del build. |
 
 - **Watch paths** evitan que un cambio solo en `admin/` vuelva a desplegar la API y viceversa.
+- **Configuración como código** (fase 10): `api/railway.json` y `admin/railway.json` guardan builder, start, pre-deploy, healthcheck, reinicio y watch paths, así quedan en git y se revisan como el resto del código. Tienen prioridad sobre lo que diga la interfaz de Railway. El archivo **no** sigue el *Root Directory*: en cada servicio hay que indicar su ruta absoluta (*Settings → Config-as-code*: `/api/railway.json`, `/admin/railway.json`). Las variables no van ahí (algunas son secretas): se definen en la interfaz. JSON no admite comentarios, por eso la explicación está aquí.
+- **Sin "sleep"** (`sleepApplication: false`): ver §8.4.
 - Un push a `main` despliega ambos servicios automáticamente (lo hace el usuario, nunca Claude).
 
 ### 8.2 Variables
