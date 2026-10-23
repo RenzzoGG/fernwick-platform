@@ -59,6 +59,9 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
+    # Por defecto el JavaScript de otro origen solo puede leer unos pocos headers "simples".
+    # La landing necesita Retry-After para decir cuántos minutos esperar tras un 429.
+    expose_headers=["Retry-After"],
     allow_credentials=False,  # no usamos cookies
 )
 

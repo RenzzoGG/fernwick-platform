@@ -414,6 +414,7 @@ Detalles de comportamiento:
 
 - `CORSMiddleware` con lista blanca en `CORS_ORIGINS`: en producción `https://fernwick.renzzogg.com` y `https://fernwick-admin.renzzogg.com`; en desarrollo `http://localhost:8080` (landing) y `http://localhost:5173` (Vite).
 - Métodos `GET, POST, PATCH, OPTIONS`; headers `Authorization, Content-Type`; `allow_credentials=False` (no usamos cookies).
+- **`expose_headers=["Retry-After"]`** (fase 10): por defecto el JavaScript de otro origen solo puede leer unos pocos headers "simples" de la respuesta; `Access-Control-Expose-Headers` habilita los demás. Así la landing lee `Retry-After` en un 429 y muestra los minutos reales de espera. Starlette envía este header a cualquier origen, pero sin `Access-Control-Allow-Origin` el navegador no deja leer nada.
 - `CORS_ORIGINS` se lee como texto separado por comas (`NoDecode` de pydantic-settings, para que no se interprete como JSON). Si falta, la lista queda **vacía**, es decir, ningún origen permitido, que es lo seguro. `config.py` **rechaza `*`** al arrancar.
 - **CORS no es autenticación.** Solo le dice al *navegador* qué páginas pueden leer las respuestas. Un script con `curl` ignora CORS por completo; por eso las rutas privadas exigen JWT y la pública tiene honeypot y límite de solicitudes.
 
@@ -424,7 +425,7 @@ Detalles de comportamiento:
   - `POST /v1/public/quotes`: 5 por minuto y 20 por día.
   - `POST /v1/auth/login`: 10 por minuto (frena la fuerza bruta).
   - `POST /v1/auth/demo`: 20 por minuto.
-  - Responde **429** con header `Retry-After` (segundos hasta que vuelve a haber cupo).
+  - Responde **429** con header `Retry-After` (segundos hasta que vuelve a haber cupo), expuesto por CORS (§5.4).
   - Algoritmo de **ventana deslizante**: por IP se guarda un `deque` con las horas de las solicitudes **aceptadas**. Las rechazadas no se guardan, así la memoria por IP queda acotada al límite mayor y no se castiga más al que insiste. Un `threading.Lock` protege los datos porque las rutas `def` corren en varios hilos. Cada 1000 solicitudes se borran de memoria las IP inactivas.
   - Se aplica como **dependencia** de FastAPI (`Depends(rate_limit(limiter))`). FastAPI resuelve las dependencias antes de validar el cuerpo, así que las solicitudes inválidas (422) también cuentan y un bot no puede tantear gratis. Las rechazadas por tamaño (413) no cuentan: el middleware las corta antes de llegar a la ruta, y ya cuestan casi nada.
   - Se guarda **en memoria**: suficiente con una sola instancia de la API. Si se escala a varias, hace falta Redis (§9).

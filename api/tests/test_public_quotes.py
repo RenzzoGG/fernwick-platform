@@ -237,3 +237,18 @@ def test_cors_permite_la_landing_en_el_endpoint(client):
 
     assert response.status_code == 201
     assert response.headers["access-control-allow-origin"] == "http://localhost:8080"
+
+
+def test_el_429_expone_retry_after_a_la_landing(client):
+    landing = {"Origin": "http://localhost:8080"}
+    for _ in range(5):
+        assert client.post(URL, json={"basura": True}, headers=landing).status_code == 422
+
+    response = client.post(URL, json=payload(), headers=landing)
+
+    # Sin Access-Control-Expose-Headers, el fetch de la landing leería Retry-After como null
+    assert response.status_code == 429
+    assert response.headers["access-control-allow-origin"] == "http://localhost:8080"
+    assert int(response.headers["retry-after"]) > 0
+    expuestos = [h.strip().lower() for h in response.headers["access-control-expose-headers"].split(",")]
+    assert "retry-after" in expuestos
