@@ -3,8 +3,10 @@ import { Link, useLocation, useParams } from "react-router";
 import { ApiError } from "../api/client";
 import { getQuote } from "../api/quotes";
 import type { Note, QuoteDetail, StatusChange } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
 import { ErrorState, LoadingState } from "../components/States";
 import { StatusBadge } from "../components/StatusBadge";
+import { StatusControl } from "../components/StatusControl";
 import { HOME_SIZE_LABELS, SERVICE_LABELS, STATUS_LABELS, formatDate, formatDateTime } from "../lib/format";
 import { useFocusOnMount, usePageTitle } from "../lib/hooks";
 import { useRequest } from "../lib/useRequest";
@@ -27,8 +29,10 @@ function useBackToList(): string {
 export function QuoteDetailPage() {
   const id = parseId(useParams().id);
   const backTo = useBackToList();
+  // Solo el admin ve controles de edición (falla cerrado: mientras no se sabe el rol, no hay)
+  const canEdit = useAuth().user?.role === "admin";
 
-  const { data, error, loading, retry } = useRequest(
+  const { data, error, loading, retry, setData } = useRequest(
     (signal) => (id === null ? Promise.reject(new ApiError(404, "Not found")) : getQuote(id, signal)),
     String(id),
   );
@@ -57,7 +61,7 @@ export function QuoteDetailPage() {
       />
     );
   } else {
-    content = <Detail quote={data} />;
+    content = <Detail quote={data} canEdit={canEdit} onChange={(quote) => setData(() => quote)} />;
   }
 
   return (
@@ -106,7 +110,13 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function Detail({ quote }: { quote: QuoteDetail }) {
+interface DetailProps {
+  quote: QuoteDetail;
+  canEdit: boolean;
+  onChange: (quote: QuoteDetail) => void;
+}
+
+function Detail({ quote, canEdit, onChange }: DetailProps) {
   const headingRef = useFocusOnMount<HTMLHeadingElement>();
   // tel: solo admite dígitos y "+"; (305) 555-0142 → tel:3055550142
   const telHref = `tel:${quote.phone.replace(/[^\d+]/g, "")}`;
@@ -164,6 +174,12 @@ function Detail({ quote }: { quote: QuoteDetail }) {
               </Field>
             </dl>
           </Section>
+
+          {canEdit && (
+            <Section title="Change status">
+              <StatusControl quote={quote} onChange={onChange} />
+            </Section>
+          )}
 
           <Section title="Status history">
             <StatusHistory changes={quote.status_history} />
