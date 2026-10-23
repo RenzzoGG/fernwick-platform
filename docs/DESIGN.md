@@ -496,16 +496,20 @@ fernwick-platform/
 │   ├── .python-version        # 3.14 (igual que en local; lo lee Railpack, que si no usaría 3.13)
 │   └── .env.example
 ├── admin/
+│   ├── public/favicon.svg     # El mismo de la landing
 │   ├── src/
-│   │   ├── api/               # Cliente HTTP (fetch + token)
-│   │   ├── auth/              # Contexto de sesión, ruta protegida
-│   │   ├── components/        # Tabla, filtros, badges de estado, banner demo, gráficas
-│   │   ├── pages/             # Login, QuotesList, QuoteDetail, Dashboard
-│   │   ├── main.jsx
-│   │   └── index.css          # Tailwind v4 (@import "tailwindcss")
+│   │   ├── api/               # types.ts (espejo de los esquemas Pydantic), client.ts (fetch + token), quotes.ts, auth.ts
+│   │   ├── auth/              # Sesión (sessionStorage), contexto useAuth, ruta protegida
+│   │   ├── components/        # Layout, banner demo, badges de estado, estados de carga/error/vacío, paginación
+│   │   ├── lib/               # Etiquetas y formato de fechas (Intl)
+│   │   ├── pages/             # Login, QuotesList, QuoteDetail (fase 8: Dashboard)
+│   │   ├── config.ts          # VITE_API_URL y zona del negocio
+│   │   ├── main.tsx
+│   │   └── index.css          # Tailwind v4 (@import "tailwindcss" + @theme con los tokens de la landing)
 │   ├── index.html
-│   ├── vite.config.js
-│   ├── package.json           # Versiones exactas
+│   ├── vite.config.ts
+│   ├── tsconfig.json          # strict, noEmit: tsc solo verifica tipos; Vite compila
+│   ├── package.json           # Versiones exactas (.npmrc con save-exact=true)
 │   └── .env.example
 ├── docs/
 │   └── DESIGN.md
@@ -516,7 +520,7 @@ fernwick-platform/
 
 - **routers → services → models.** Los routers solo traducen HTTP (validar entrada, códigos de estado); la lógica y las consultas viven en `services/`, que se pueden probar sin HTTP. Para un proyecto de este tamaño no se agrega una capa extra de "repositorios".
 - **SQLAlchemy síncrono** (no `async`): FastAPI ejecuta las rutas `def` en un pool de hilos, el tráfico esperado es mínimo y el código síncrono es más fácil de aprender y probar. Pasar a `async` más adelante es un cambio localizado en `db.py` y los servicios.
-- **Panel:** React Router para las páginas; `fetch` nativo (sin axios). Para las gráficas se propondrá una librería (p. ej. Recharts) o barras simples hechas con Tailwind; se decide en la fase 8 con aprobación, como cualquier dependencia nueva.
+- **Panel:** **TypeScript** (modo `strict`) con React Router (`react-router`) para las páginas y `fetch` nativo (sin axios ni librerías de peticiones). Los tipos de `src/api/types.ts` se escriben a mano a partir de `api/app/schemas/` (sin generadores, para no sumar dependencias): si la API cambia un esquema, se actualizan en el mismo commit. `npm run build` corre `tsc --noEmit` antes de `vite build`, así un error de tipos detiene el build. La **interfaz va en inglés**, como la landing y los mensajes de la API (la demo es para clientes de Upwork); los comentarios del código, en español. Los filtros de la lista viven en la URL (`/quotes?status=new&q=ana&page=2`): Atrás, recargar y compartir el link funcionan. Para las gráficas se propondrá una librería (p. ej. Recharts) o barras simples hechas con Tailwind; se decide en la fase 8 con aprobación, como cualquier dependencia nueva.
 - **Tests de la API**: fixtures en `tests/conftest.py` (`db_session`, `client`, `admin`, `demo`) y funciones de apoyo en `tests/helpers.py` (`bearer`, `make_quote`, `local`, `como_rol`). La conexión de las pruebas es del dueño (que salta RLS, para preparar filas reales y demo); el `client` corre cada petición como `fernwick_app`/`fernwick_demo`, igual que en producción, así que las pruebas de la API también prueban RLS. Corren contra una base PostgreSQL real `fernwick_test` (no SQLite): RLS, `pg_trgm` y `generate_series` no existen en SQLite, y lo que queremos probar es justamente eso. Cada test corre dentro de una transacción que se revierte al final.
 
 ---

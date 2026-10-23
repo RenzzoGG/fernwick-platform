@@ -1,0 +1,64 @@
+/*
+  Tailwind CSS v4: configuración "CSS-first" (sin tailwind.config.js), igual que la landing.
+  El plugin de Vite escanea src/ y genera solo las clases que se usan.
+*/
+@import "tailwindcss";
+
+/* Tokens de diseño copiados de la landing (styles/input.css) para que el panel se vea de la misma marca */
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand-50: #f0fdfa;
+  --color-brand-100: #ccfbf1;
+  --color-brand-200: #99f6e4;
+  --color-brand-300: #5eead4;
+  --color-brand-600: #0d9488;
+  --color-brand-700: #0f766e;
+  --color-brand-800: #115e59;
+  --color-brand-900: #134e4a;
+
+  --color-sky-50: #f0f9ff;
+  --color-sky-100: #e0f2fe;
+  --color-sky-200: #bae6fd;
+  --color-sky-700: #0369a1;
+
+  --color-ink-50: #f8fafc;
+  --color-ink-100: #f1f5f9;
+  --color-ink-200: #e2e8f0;
+  --color-ink-300: #cbd5e1;
+  --color-ink-500: #64748b;
+  --color-ink-600: #475569;
+  --color-ink-700: #334155;
+  --color-ink-900: #0f172a;
+
+  --color-sun-50: #fffbeb;
+  --color-sun-200: #fde68a;
+  --color-sun-400: #fbbf24;
+  --color-sun-800: #92400e;
+  --color-danger-600: #c81e1e;
+  --color-danger-50: #fef2f2;
+}
+
+@layer base {
+  body {
+    @apply bg-ink-50 font-sans text-ink-700 antialiased;
+  }
+
+  /* Foco visible consistente en todo lo interactivo (igual que la landing) */
+  :focus-visible {
+    @apply outline-3 outline-offset-2 outline-brand-700;
+  }
+
+  /* Los títulos que reciben foco por código (tabIndex=-1) no necesitan el contorno */
+  [tabindex="-1"]:focus {
+    outline: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
