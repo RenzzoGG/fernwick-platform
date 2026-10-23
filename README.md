@@ -261,3 +261,5 @@ npm run preview     # sirve dist/ en http://localhost:4173 para revisar el build
   - si al recargar la página `/auth/me` falla.
   
   Después de volver a entrar, regresa a la página donde estaba (`?next=`).
+- **Páginas**: `/dashboard` (métricas; es la página de inicio), `/quotes` (lista) y `/quotes/:id` (detalle). El admin cambia el estado (con confirmación) y agrega notas desde el detalle; el demo ve lo mismo sin controles de edición.
+- **Escrituras rechazadas**: si la API responde `403` (p. ej. una escritura forzada desde la consola con la cuenta demo), el panel muestra *"This account is read-only"* y vuelve a pedir `/auth/me`. Si el estado ya era ese (`409`, quizá otro admin lo cambió), relee la cotización y lo avisa.
