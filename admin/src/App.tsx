@@ -4,6 +4,7 @@ import { RequireAuth } from "./auth/RequireAuth";
 import { Layout } from "./components/Layout";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { QuoteDetailPage } from "./pages/QuoteDetailPage";
 import { QuotesListPage } from "./pages/QuotesListPage";
 
 /*
@@ -26,6 +27,7 @@ export function App() {
           >
             <Route index element={<Navigate to="/quotes" replace />} />
             <Route path="quotes" element={<QuotesListPage />} />
+            <Route path="quotes/:id" element={<QuoteDetailPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Routes>
