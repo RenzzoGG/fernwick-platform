@@ -6,7 +6,7 @@ import { Logo } from "./Logo";
 
 /** Marco de las páginas privadas: banner demo, encabezado y <main>. <Outlet /> = la página actual. */
 export function Layout() {
-  const { user, signOut } = useAuth();
+  const { user, signOut, forbiddenNotice, dismissForbidden } = useAuth();
   const isDemo = user?.role !== "admin"; // falla cerrado, como scope_is_demo de la API
 
   return (
@@ -19,6 +19,7 @@ export function Layout() {
         Skip to content
       </a>
       {isDemo && <DemoBanner />}
+      {forbiddenNotice && <ForbiddenNotice onDismiss={dismissForbidden} />}
       <header className="border-b border-ink-200 bg-white">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3">
           <div className="flex items-center gap-6">
@@ -58,6 +59,23 @@ export function Layout() {
       <main id="main" tabIndex={-1} className="mx-auto max-w-6xl px-4 py-6 sm:py-8">
         <Outlet />
       </main>
+    </div>
+  );
+}
+
+/** Aviso cuando la API rechaza una escritura (403). role="alert": el lector de pantalla lo anuncia. */
+function ForbiddenNotice({ onDismiss }: { onDismiss: () => void }) {
+  return (
+    <div role="alert" className="border-b border-danger-600/30 bg-danger-50">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-2">
+        <p className="text-sm text-ink-900">
+          <strong className="font-semibold text-danger-600">This account is read-only.</strong> Your change was not
+          saved.
+        </p>
+        <button type="button" className={buttonSecondary} onClick={onDismiss}>
+          Dismiss
+        </button>
+      </div>
     </div>
   );
 }

@@ -27,6 +27,17 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   onUnauthorized = handler;
 }
 
+/*
+  Lo mismo para el 403: la API lo responde cuando un usuario sin permiso (el demo) intenta escribir.
+  La interfaz del demo no muestra botones de edición, pero si alguien fuerza la escritura (desde la
+  consola, o porque su rol cambió en la base con la página abierta), AuthContext muestra un aviso.
+*/
+let onForbidden: (() => void) | null = null;
+
+export function setForbiddenHandler(handler: (() => void) | null): void {
+  onForbidden = handler;
+}
+
 interface RequestOptions {
   method?: "GET" | "POST" | "PATCH";
   body?: unknown;
@@ -77,6 +88,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
 
   if (!response.ok) {
     if (response.status === 401 && auth) onUnauthorized?.();
+    if (response.status === 403 && auth) onForbidden?.();
     throw new ApiError(response.status, detailMessage(data) ?? `Request failed (${response.status}).`);
   }
   return data as T;

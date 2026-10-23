@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { getMe } from "../api/auth";
-import { ApiError, isAbortError, setUnauthorizedHandler } from "../api/client";
+import { ApiError, isAbortError, setForbiddenHandler, setUnauthorizedHandler } from "../api/client";
 import type { CurrentUser, TokenResponse } from "../api/types";
 import { clearSession, getSession, saveSession, type Session } from "./session";
 
@@ -17,6 +17,8 @@ interface AuthContextValue {
   user: CurrentUser | null; // null mientras se confirma la sesión con /auth/me
   userError: string | null; // /auth/me falló por algo que no es 401 (p. ej. la API está caída)
   signOutReason: SignOutReason | null;
+  forbiddenNotice: boolean; // la API rechazó una escritura con 403 (ver setForbiddenHandler)
+  dismissForbidden: () => void;
   signIn: (response: TokenResponse) => Promise<void>;
   signOut: (reason: SignOutReason) => void;
   retryUser: () => void;
@@ -30,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userError, setUserError] = useState<string | null>(null);
   const [signOutReason, setSignOutReason] = useState<SignOutReason | null>(null);
   const [userAttempt, setUserAttempt] = useState(0);
+  const [forbiddenNotice, setForbiddenNotice] = useState(false);
 
   const signOut = useCallback((reason: SignOutReason) => {
     clearSession();
@@ -37,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setUserError(null);
     setSignOutReason(reason);
+    setForbiddenNotice(false);
   }, []);
 
   const signIn = useCallback(async (response: TokenResponse) => {
@@ -59,6 +63,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(() => signOut("expired"));
     return () => setUnauthorizedHandler(null);
   }, [signOut]);
+
+  /*
+    Un 403 muestra el aviso y vuelve a pedir /auth/me: si el rol cambió en la base con la página
+    abierta (admin → demo), la interfaz se corrige sola y esconde los controles de edición.
+    No se pone user en null (eso desmontaría la página mientras llega la respuesta).
+  */
+  useEffect(() => {
+    setForbiddenHandler(() => {
+      setForbiddenNotice(true);
+      getMe()
+        .then(setUser)
+        .catch(() => {
+          // 401 ya cierra la sesión; cualquier otro error: se queda el usuario que había
+        });
+    });
+    return () => setForbiddenHandler(null);
+  }, []);
+
+  const dismissForbidden = useCallback(() => setForbiddenNotice(false), []);
 
   // Sesión guardada de antes (recargar la página): se confirma con /auth/me
   useEffect(() => {
@@ -92,8 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // useMemo: el objeto solo cambia si cambia algún valor (evita renders de más en los consumidores)
   const value = useMemo(
-    () => ({ session, user, userError, signOutReason, signIn, signOut, retryUser }),
-    [session, user, userError, signOutReason, signIn, signOut, retryUser],
+    () => ({ session, user, userError, signOutReason, forbiddenNotice, dismissForbidden, signIn, signOut, retryUser }),
+    [session, user, userError, signOutReason, forbiddenNotice, dismissForbidden, signIn, signOut, retryUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

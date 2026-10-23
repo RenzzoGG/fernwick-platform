@@ -1,5 +1,5 @@
 import { apiFetch } from "./client";
-import type { QuoteDetail, QuoteListParams, QuotePage } from "./types";
+import type { Note, QuoteDetail, QuoteListParams, QuotePage, QuoteStatus } from "./types";
 
 export function listQuotes(params: QuoteListParams, signal?: AbortSignal): Promise<QuotePage> {
   // URLSearchParams escapa los valores (una búsqueda con "&" o "%" no rompe la URL)
@@ -13,4 +13,15 @@ export function listQuotes(params: QuoteListParams, signal?: AbortSignal): Promi
 
 export function getQuote(id: number, signal?: AbortSignal): Promise<QuoteDetail> {
   return apiFetch<QuoteDetail>(`/v1/quotes/${id}`, { signal });
+}
+
+// Escrituras (solo admin: el demo recibe 403, ver setForbiddenHandler en client.ts)
+
+/** Devuelve el detalle completo, ya con el historial nuevo: el panel no necesita volver a pedirlo. */
+export function changeQuoteStatus(id: number, status: QuoteStatus): Promise<QuoteDetail> {
+  return apiFetch<QuoteDetail>(`/v1/quotes/${id}/status`, { method: "PATCH", body: { status } });
+}
+
+export function addQuoteNote(id: number, body: string): Promise<Note> {
+  return apiFetch<Note>(`/v1/quotes/${id}/notes`, { method: "POST", body: { body } });
 }

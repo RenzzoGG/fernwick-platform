@@ -97,3 +97,18 @@ export interface QuoteDetail extends QuoteSummary {
 export const SEARCH_MIN = 2;
 export const SEARCH_MAX = 100;
 export const PAGE_SIZE = 20;
+export const NOTE_BODY_MAX = 2000; // NOTE_BODY_MAX de models/base.py (el mismo del CHECK)
+
+/** DailyCount: un día de last_30_days. */
+export interface DailyCount {
+  date: IsoDate;
+  count: number;
+}
+
+/** MetricsSummary: GET /v1/metrics/summary. La API manda todas las claves, aunque valgan 0. */
+export interface MetricsSummary {
+  total: number;
+  by_status: Record<QuoteStatus, number>;
+  by_service: Record<Service, number>;
+  last_30_days: DailyCount[]; // del más antiguo a hoy, sin huecos
+}

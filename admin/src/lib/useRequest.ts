@@ -17,6 +17,8 @@ interface RequestState<T> {
  *   rápido, una respuesta lenta y vieja no puede pisar a la nueva.
  * - keepPrevious: mientras carga lo nuevo, se siguen mostrando los datos anteriores
  *   (la lista no "parpadea" al cambiar de página).
+ * - setData reemplaza los datos sin volver a pedirlos: lo usan las escrituras, cuya respuesta
+ *   ya trae lo nuevo (p. ej. el PATCH de estado devuelve el detalle con el historial).
  */
 export function useRequest<T>(load: (signal: AbortSignal) => Promise<T>, key: string, keepPrevious = false) {
   const [state, setState] = useState<RequestState<T>>({ data: undefined, error: null, loading: true });
@@ -35,5 +37,9 @@ export function useRequest<T>(load: (signal: AbortSignal) => Promise<T>, key: st
   }, [key, attempt, keepPrevious]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
-  return { ...state, retry };
+  // Forma "función" (prev => nuevo): así dos escrituras seguidas no se pisan con datos viejos
+  const setData = useCallback((update: (prev: T) => T) => {
+    setState((prev) => (prev.data === undefined ? prev : { ...prev, data: update(prev.data) }));
+  }, []);
+  return { ...state, retry, setData };
 }
