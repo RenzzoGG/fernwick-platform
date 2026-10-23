@@ -1,14 +1,14 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { App } from "./App";
 import "./index.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Falta el elemento #root en index.html");
 
+// StrictMode: en desarrollo ejecuta dos veces los efectos para detectar los que no se limpian bien
 createRoot(root).render(
   <StrictMode>
-    <main className="p-8">
-      <h1 className="font-display text-2xl font-bold text-ink-900">Fernwick Admin</h1>
-    </main>
+    <App />
   </StrictMode>,
 );
