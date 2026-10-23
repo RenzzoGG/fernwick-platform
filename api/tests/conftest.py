@@ -18,7 +18,7 @@ if not (make_url(_test_url).database or "").endswith("_test"):
     pytest.exit("TEST_DATABASE_URL debe apuntar a una base cuyo nombre termine en _test.", returncode=1)
 os.environ["DATABASE_URL"] = _test_url
 # Orígenes fijos para las pruebas: no dependen de lo que tenga cada uno en su .env
-os.environ["CORS_ORIGINS"] = "http://localhost:8000,http://localhost:5173"
+os.environ["CORS_ORIGINS"] = "http://localhost:8080,http://localhost:5173"
 # Sin confiar en encabezados de proxy, como en desarrollo (test_client_ip.py prueba los otros modos)
 os.environ["CLIENT_IP_HEADER"] = "none"
 # Secreto aleatorio en cada ejecución: las pruebas no dependen del .env ni guardan ningún secreto

@@ -3,7 +3,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 
-PERMITIDO = "http://localhost:8000"  # fijado en conftest.py
+PERMITIDO = "http://localhost:8080"  # fijado en conftest.py
 
 
 def preflight(client, origin: str):

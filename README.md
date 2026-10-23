@@ -218,7 +218,7 @@ Las pruebas usan la base de `TEST_DATABASE_URL` (`fernwick_test`), nunca la de d
 | `ENVIRONMENT` | `development` | `development`, `test` o `production` (en producción no hay `/docs`) |
 | `DATABASE_URL` | `postgresql+psycopg://renzzo@/fernwick?host=/var/run/postgresql` | Conexión a PostgreSQL (API y Alembic) |
 | `TEST_DATABASE_URL` | `postgresql+psycopg://renzzo@/fernwick_test?host=/var/run/postgresql` | Base de pruebas (solo pytest) |
-| `CORS_ORIGINS` | `http://localhost:8000,http://localhost:5173` | Orígenes que pueden llamar a la API desde el navegador, separados por comas (nunca `*`; vacío = ninguno) |
+| `CORS_ORIGINS` | `http://localhost:8080,http://localhost:5173` | Orígenes que pueden llamar a la API desde el navegador, separados por comas (nunca `*`; vacío = ninguno) |
 | `BUSINESS_TIMEZONE` | `America/New_York` | Zona del negocio: define qué es "hoy" para validar `preferred_date` |
 | `JWT_SECRET` | *(genera uno)* | Clave para firmar los tokens; obligatoria, ≥ 32 bytes: `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Nunca se commitea |
 | `JWT_EXPIRE_MINUTES` | `60` | Duración de los tokens de acceso |

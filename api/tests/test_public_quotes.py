@@ -233,7 +233,7 @@ def test_solicitudes_invalidas_tambien_cuentan_para_el_limite(client):
 
 
 def test_cors_permite_la_landing_en_el_endpoint(client):
-    response = client.post(URL, json=payload(), headers={"Origin": "http://localhost:8000"})
+    response = client.post(URL, json=payload(), headers={"Origin": "http://localhost:8080"})
 
     assert response.status_code == 201
-    assert response.headers["access-control-allow-origin"] == "http://localhost:8000"
+    assert response.headers["access-control-allow-origin"] == "http://localhost:8080"
