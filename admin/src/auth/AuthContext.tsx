@@ -130,7 +130,7 @@ export function useAuth(): AuthContextValue {
 
 /** Solo rutas internas: "/quotes?x=1" sí; "//evil.com" o "https://…" no (redirección abierta). */
 export function safeNext(raw: string | null): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/quotes";
-  if (raw.startsWith("/login")) return "/quotes";
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.startsWith("/\\")) return "/dashboard";
+  if (raw.startsWith("/login")) return "/dashboard";
   return raw;
 }

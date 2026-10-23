@@ -4,6 +4,12 @@ import { buttonSecondary } from "../lib/ui";
 import { DemoBanner } from "./DemoBanner";
 import { Logo } from "./Logo";
 
+// NavLink pasa isActive: la página actual queda subrayada (y NavLink pone aria-current="page")
+const navLinkClass = ({ isActive }: { isActive: boolean }) =>
+  isActive
+    ? "inline-flex min-h-11 items-center border-b-2 border-brand-700 px-1 font-semibold text-ink-900"
+    : "inline-flex min-h-11 items-center border-b-2 border-transparent px-1 font-semibold text-ink-600 hover:text-ink-900";
+
 /** Marco de las páginas privadas: banner demo, encabezado y <main>. <Outlet /> = la página actual. */
 export function Layout() {
   const { user, signOut, forbiddenNotice, dismissForbidden } = useAuth();
@@ -23,21 +29,17 @@ export function Layout() {
       <header className="border-b border-ink-200 bg-white">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-x-6 gap-y-2 px-4 py-3">
           <div className="flex items-center gap-6">
-            <Link to="/quotes" className="flex items-center gap-2 rounded-lg">
+            <Link to="/dashboard" className="flex items-center gap-2 rounded-lg">
               <Logo />
               <span className="font-display text-lg font-bold text-ink-900">
                 Fernwick <span className="font-semibold text-brand-700">Admin</span>
               </span>
             </Link>
-            <nav aria-label="Main">
-              <NavLink
-                to="/quotes"
-                className={({ isActive }) =>
-                  isActive
-                    ? "inline-flex min-h-11 items-center border-b-2 border-brand-700 px-1 font-semibold text-ink-900"
-                    : "inline-flex min-h-11 items-center border-b-2 border-transparent px-1 font-semibold text-ink-600 hover:text-ink-900"
-                }
-              >
+            <nav aria-label="Main" className="flex gap-5">
+              <NavLink to="/dashboard" className={navLinkClass}>
+                Dashboard
+              </NavLink>
+              <NavLink to="/quotes" className={navLinkClass}>
                 Quotes
               </NavLink>
             </nav>

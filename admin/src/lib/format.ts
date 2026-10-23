@@ -47,6 +47,8 @@ const dateFormat = new Intl.DateTimeFormat("en-US", {
   timeZone: "UTC",
 });
 
+const shortDateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
 const dateTimeFormat = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
   timeStyle: "short",
@@ -67,4 +69,10 @@ export function formatDate(value: IsoDate): string {
 export function formatDateTime(value: IsoDateTime): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : dateTimeFormat.format(date);
+}
+
+/** Fecha pura corta, para ejes de gráficas: "2026-10-20" → "Oct 20". */
+export function formatShortDate(value: IsoDate): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? value : shortDateFormat.format(date);
 }

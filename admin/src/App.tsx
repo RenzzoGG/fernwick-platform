@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router";
 import { AuthProvider } from "./auth/AuthContext";
 import { RequireAuth } from "./auth/RequireAuth";
 import { Layout } from "./components/Layout";
+import { DashboardPage } from "./pages/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
 import { QuoteDetailPage } from "./pages/QuoteDetailPage";
@@ -25,7 +26,8 @@ export function App() {
               </RequireAuth>
             }
           >
-            <Route index element={<Navigate to="/quotes" replace />} />
+            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route path="dashboard" element={<DashboardPage />} />
             <Route path="quotes" element={<QuotesListPage />} />
             <Route path="quotes/:id" element={<QuoteDetailPage />} />
             <Route path="*" element={<NotFoundPage />} />
