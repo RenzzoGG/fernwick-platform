@@ -149,8 +149,16 @@ function DailyChart({ days, total }: { days: DailyCount[]; total: number }) {
   const slot = 10;
   const gap = 2; // 2 unidades de separación entre barras
   const width = days.length * slot;
-  // Etiquetas del eje X: primero, último y cada 7 días (las intermedias, solo en pantallas anchas)
-  const labelAt = (i: number) => i === 0 || i === days.length - 1 || i % 7 === 0;
+  /*
+    Etiquetas del eje X: se cuentan hacia atrás desde hoy (el último día), cada 7 días en
+    pantallas anchas y cada 14 en el celular. Así dos etiquetas siempre quedan separadas por un
+    paso completo (contando desde el primer día, la del día 28 quedaba pegada a la de hoy, el 29).
+    En los primeros 7 días no hay etiqueta: centrada tan a la izquierda, se saldría hacia el eje Y.
+    Peor caso, 375 px de pantalla: ~280 px de gráfica, 14 días ≈ 130 px y una fecha ≈ 40 px.
+  */
+  const last = days.length - 1;
+  const labelAt = (i: number) => (last - i) % 7 === 0 && (i === last || i >= 7);
+  const onMobile = (i: number) => (last - i) % 14 === 0;
 
   return (
     <ChartFigure
@@ -227,9 +235,10 @@ function DailyChart({ days, total }: { days: DailyCount[]; total: number }) {
               labelAt(i) ? (
                 <span
                   key={day.date}
-                  style={{ left: `${((i + 0.5) / days.length) * 100}%` }}
-                  className={`absolute whitespace-nowrap ${
-                    i === 0 ? "" : i === days.length - 1 ? "-translate-x-full" : "hidden -translate-x-1/2 sm:inline"
+                  // Hoy va pegada al borde derecho (no se sale de la gráfica); las demás, centradas en su barra
+                  style={i === last ? { right: 0 } : { left: `${((i + 0.5) / days.length) * 100}%` }}
+                  className={`absolute whitespace-nowrap ${i === last ? "" : "-translate-x-1/2"} ${
+                    onMobile(i) ? "" : "hidden sm:inline"
                   }`}
                 >
                   {formatShortDate(day.date)}
