@@ -28,8 +28,9 @@ python3 -m venv .venv                     # crea el entorno virtual (no se commi
 source .venv/bin/activate                 # actívalo; el prompt muestra (.venv)
 pip install -r requirements-dev.txt       # dependencias de la app + pruebas, versiones exactas
 cp .env.example .env                      # configuración local (no se commitea); ajusta las URLs si hace falta
-# pon un JWT_SECRET en .env (obligatorio; sin él ni la API ni Alembic arrancan):
-python -c "import secrets; print(secrets.token_urlsafe(48))"
+# genera un JWT_SECRET y escríbelo directo en .env, sin mostrarlo en pantalla
+# (obligatorio; sin él ni la API ni Alembic arrancan):
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$(python -c 'import secrets; print(secrets.token_urlsafe(48))')|" .env
 alembic upgrade head                      # crea las tablas en la base de DATABASE_URL
 python -m app.cli seed-demo               # (opcional) datos ficticios para la cuenta demo
 ```
