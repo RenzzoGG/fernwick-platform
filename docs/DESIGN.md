@@ -11,7 +11,7 @@
 5. [Seguridad](#5-seguridad)
 6. [Estructura del repositorio](#6-estructura-del-repositorio)
 7. [Plan de fases](#7-plan-de-fases)
-8. [Despliegue en Railway](#8-despliegue-en-railway)
+8. [Despliegue en Railway y Cloudflare](#8-despliegue-en-railway-y-cloudflare)
 9. [Decisiones abiertas y mejoras futuras](#9-decisiones-abiertas-y-mejoras-futuras)
 
 ---
@@ -436,7 +436,8 @@ Detalles de comportamiento:
   - Si el encabezado falta o no es una IP válida, se usa la IP de la conexión. La IP se normaliza (`ipaddress`) para que la misma IPv6 escrita de dos formas no tenga dos cupos.
   - Es una variable con valores fijos y no un booleano "confiar en proxies": un booleano tendría que adivinar el encabezado, y "probar uno y si no el otro" permite elegir la IP a quien llegue sin pasar por Cloudflare.
   - **Uvicorn corre con `--no-proxy-headers`**, así solo la app decide la IP. Con `--forwarded-allow-ips="*"`, Uvicorn reemplaza la IP por la entrada **izquierda** de `X-Forwarded-For`, que es falsificable. Y sin ninguna opción, confía en ese encabezado cuando la conexión viene de `127.0.0.1`, así que en local un `curl -H 'X-Forwarded-For: …'` cambiaría la IP.
-  - Pendiente para la fase 10: el dominio `*.up.railway.app` llega a la API **sin pasar por Cloudflare**, y por ahí se podría falsificar `CF-Connecting-IP`. Hay que quitarlo en Railway y dejar solo `fernwick-api.renzzogg.com` con el proxy de Cloudflare activo.
+  - El dominio `*.up.railway.app` llegaba a la API **sin pasar por Cloudflare**, y por ahí se podía falsificar `CF-Connecting-IP`: en la fase 10 se borra y queda solo `fernwick-api.renzzogg.com` con el proxy de Cloudflare (§8.3).
+  - **Riesgo residual (aceptado):** el edge de Railway enruta por el nombre del dominio (Host/SNI), así que alguien que mande la petición directo a una IP del edge con `Host: fernwick-api.renzzogg.com` se salta Cloudflare y puede inventar `CF-Connecting-IP`. Solo le sirve para esquivar el límite de solicitudes (el login sigue protegido por Argon2id y contraseñas de ≥ 12 caracteres; las rutas privadas, por JWT). La mitigación está en §9.
   - Al rechazar una solicitud con 429 se registra un `warning` con la ruta, sin la IP.
 - **Validación** con Pydantic (`schemas/quote.py`): longitudes tomadas de las mismas constantes que la tabla (`models/base.py`: nombre 2–100, email ≤ 254, teléfono ≤ 30, mensaje ≤ 500); `EmailStr` (paquete `email-validator`, sin consultas DNS); teléfono con solo dígitos, espacios y `+ ( ) - .`, y ≥ 10 dígitos; `service`/`home_size` como `Literal[*SERVICES]`/`Literal[*HOME_SIZES]` (sin copiar las listas); fecha entre hoy y hoy + 365 días en `BUSINESS_TIMEZONE` (el tope evita fechas absurdas como 9999-12-31); recorte de espacios (`str_strip_whitespace`); mensaje vacío → `NULL`; `extra="forbid"` para rechazar campos desconocidos. Mensajes de error en inglés, como la landing.
 - **Tamaño del cuerpo**: un middleware ASGI propio (`app/middleware.py`) rechaza con 413 los cuerpos de más de **10 KB** (una cotización legítima ocupa < 2 KB). Si llega `Content-Length`, responde sin leer el cuerpo. Si no llega (envío por partes, *chunked*) o miente, cuenta los bytes mientras se leen y corta al pasarse. Va por dentro de CORS para que el 413 también lleve los headers CORS y la landing pueda leerlo.
@@ -469,7 +470,7 @@ Detalles de comportamiento:
 
 ### 5.7 Otros
 
-- HTTPS en todos los dominios (Railway emite los certificados).
+- HTTPS en todos los dominios: Cloudflare con el visitante y Railway con Cloudflare (modo *Full*, §8.3).
 - Datos personales: las cotizaciones reales solo las ve el admin. Respaldo manual con `pg_dump` antes de cambios grandes.
 
 ---
@@ -549,11 +550,11 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 | 7 | Panel I | Vite + React + Tailwind, login (incluido "Ver demo"), lista con filtro/búsqueda, detalle | Probado a mano contra la API local con admin y con demo; `npm run build` sin errores |
 | 8 | Panel II | Cambiar estado, agregar notas, tablero de métricas, banner y modo demo | Flujo completo admin; con demo no hay botones de edición y la API rechaza escrituras forzadas |
 | 9 | Conectar la landing | (Repo `fernwick-home-cleaning`) `fetch` real a la API, campo honeypot, manejo de errores 422/429 | Enviar desde la landing local → aparece en el panel local; subir `?v=` del JS según sus reglas |
-| 10 | Despliegue | Servicios de Railway, variables, dominios, migraciones, admin y seed en producción | Prueba de humo: `/health`, cotización desde `fernwick.renzzogg.com`, login admin, demo sin datos reales, CORS desde un origen no permitido falla |
+| 10 | Despliegue | `railway.json`, servicios de Railway, variables, dominios en Cloudflare, migraciones, admin y seed en producción; `Retry-After` expuesto por CORS | Prueba de humo (§8.5): `/health`, cotización desde `fernwick.renzzogg.com`, login admin, demo sin datos reales, CORS desde un origen no permitido falla |
 
 ---
 
-## 8. Despliegue en Railway
+## 8. Despliegue en Railway y Cloudflare
 
 ### 8.1 Servicios (un proyecto de Railway, monorepo)
 
@@ -575,18 +576,23 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 
 **Primer despliegue (una sola vez, fase 10).** La migración `0003` crea los roles: necesita un dueño superusuario o con `CREATEROLE`. En Railway el usuario `postgres` es superusuario, así que no hace falta nada especial. El orden importa, porque `fernwick_app` nace **sin contraseña** y la API no puede entrar hasta que se la pongamos:
 
-1. Crear el servicio Postgres y las variables de la API, salvo `DATABASE_URL`.
-2. Migrar como dueño desde tu PC: `railway run alembic upgrade head`. Usa `MIGRATIONS_DATABASE_URL` y crea tablas, roles, GRANTs y políticas.
-3. Poner la contraseña de `fernwick_app`: entrar con `psql` usando la URL del dueño y ejecutar `\password fernwick_app`. psql calcula el hash SCRAM en tu PC, así que la contraseña no viaja en texto ni queda en los logs del servidor (con `ALTER ROLE … PASSWORD '…'` sí podría). Guardarla en un gestor de contraseñas.
-4. Definir `DATABASE_URL` con `fernwick_app` y esa contraseña (host interno, §8.2), y desplegar. El *pre-deploy* `alembic upgrade head` ya no tiene nada que hacer. Si `DATABASE_URL` apuntara por error a `postgres`, la API no arranca (§3.1).
-5. `railway run python -m app.cli create-admin` (usa `DATABASE_URL`, como `fernwick_app`) y `railway run python -m app.cli seed-demo` (usa `MIGRATIONS_DATABASE_URL`, el dueño: solo él puede escribir filas demo).
+1. Crear Postgres y los servicios `api` y `admin` como **servicios vacíos** (sin repo todavía): al conectar un repo, Railway despliega en el acto, y sin variables ese despliegue fallaría. Definir *Root Directory*, *Config-as-code* y las variables de la API, salvo `DATABASE_URL`.
+2. Migrar como dueño **desde tu PC** con la URL **pública** del dueño (`DATABASE_PUBLIC_URL` del servicio Postgres): `${{Postgres.DATABASE_URL}}` usa el host privado (`postgres.railway.internal`), que solo se alcanza desde dentro de Railway. La URL se lee con `read -rsp` (no se muestra ni queda en el historial) y se pasa solo a ese comando: `MIGRATIONS_DATABASE_URL="$OWNER_URL" alembic upgrade head`. El resto de la configuración sale del `.env` local, que no afecta a la migración.
+3. Poner la contraseña de `fernwick_app`: `psql "$OWNER_URL"` y `\password fernwick_app`. psql calcula el hash SCRAM en tu PC, así que la contraseña no viaja en texto ni queda en los logs del servidor (con `ALTER ROLE … PASSWORD '…'` sí podría) ni en `~/.psql_history`. Se genera con `secrets.token_urlsafe(32)` (solo `A-Z a-z 0-9 - _`: va en la URL sin codificar), se copia con `clip.exe` y se guarda en un gestor de contraseñas.
+4. Datos demo y admin, también desde tu PC: `MIGRATIONS_DATABASE_URL="$OWNER_URL" python -m app.cli seed-demo` (solo el dueño puede escribir filas demo) y `DATABASE_URL="$OWNER_URL" python -m app.cli create-admin --email …` (como dueño; la política de `users` es `true`, así que da igual). Luego `unset OWNER_URL`.
+5. Definir `DATABASE_URL=postgresql://fernwick_app:<contraseña>@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}` y conectar el repo. El *pre-deploy* `alembic upgrade head` ya no tiene nada que hacer. Prueba recomendada antes: conectar con `DATABASE_URL=${{Postgres.DATABASE_URL}}` y comprobar que el despliegue **falla** con "DATABASE_URL entra con un rol que se salta RLS" (§3.1).
+6. `JWT_SECRET` se genera igual (`secrets.token_urlsafe(48)` → `clip.exe`) y se pega directo en Railway; no hace falta guardarlo (si se pierde, se cambia y solo se cierran las sesiones abiertas).
+7. Al terminar, se recomienda quitar el *TCP Proxy* público de Postgres: la base deja de estar en internet. Se vuelve a activar solo para mantenimiento desde la PC (p. ej. `seed-demo`).
 
 Si algún día el dueño no fuera superusuario ni tuviera `CREATEROLE`, un superusuario crearía antes los dos roles a mano con el mismo SQL de la migración (`CREATE ROLE fernwick_app LOGIN …; CREATE ROLE fernwick_demo NOLOGIN …`); la migración los encuentra y sigue.
 
-### 8.3 Dominios
+### 8.3 Dominios y Cloudflare
 
+- El DNS de `renzzogg.com` está en **Cloudflare**, con proxy (nube naranja) y SSL/TLS en modo **Full** (con *Flexible*, Cloudflare hablaría HTTP con Railway y habría bucles de redirección).
 - En Railway: *Settings → Networking → Custom Domain* en cada servicio: `fernwick-api.renzzogg.com` (api) y `fernwick-admin.renzzogg.com` (admin).
-- En el DNS de `renzzogg.com`: un registro `CNAME` por subdominio apuntando al destino que muestra Railway (y el `TXT` de verificación si lo pide). Railway emite el certificado HTTPS.
+- En Cloudflare: un `CNAME` por subdominio al destino que muestra Railway, **Proxied**; el `TXT` de verificación, si lo pide, va **DNS only**. Railway emite su certificado; Cloudflare presenta el suyo al visitante.
+- Con el dominio propio verificado, se **borra** el dominio `*.up.railway.app` de cada servicio. En la API es obligatorio: ese dominio llega sin pasar por Cloudflare, y por ahí se podría falsificar `CF-Connecting-IP` (§5.5). En el panel es orden: CORS igual rechazaría ese origen.
+- Cloudflare cachea los `.js`/`.css` del panel (Vite les pone un hash en el nombre, así que nunca se sirve uno viejo) y no cachea HTML ni las respuestas JSON de la API.
 
 ### 8.4 Consumo esperado
 
@@ -604,6 +610,17 @@ Calculado con tarifas de referencia (≈ US$ 10 por GB de RAM al mes, ≈ US$ 20
 
 Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pero la primera petición tardaría varios segundos en despertar: mala impresión en una demo en vivo para un cliente. Se recomienda no activarlo.
 
+### 8.5 Prueba de humo (después de cada despliegue importante)
+
+1. `curl -s https://fernwick-api.renzzogg.com/health` → `{"status":"ok","db":"ok"}`; `curl -sI` muestra `server: cloudflare`; `/docs` da 404.
+2. Una cotización enviada desde `https://fernwick.renzzogg.com` aparece en el panel.
+3. Login admin: lista, detalle, cambiar estado y agregar nota.
+4. "View demo": banner demo, solo datos ficticios (no aparece la cotización real), sin botones de edición, tablero con datos de 30 días. Un `PATCH` forzado con el token demo → 403.
+5. CORS: un preflight desde `https://evil.example` → 400 sin `access-control-allow-origin`; desde la landing → 200.
+6. Seis `POST {}` seguidos a `/v1/public/quotes` (los 422 cuentan para el límite y no crean filas) → el sexto es 429 con `Retry-After` y `access-control-expose-headers: Retry-After`.
+7. Panel: recargar `/quotes/123` devuelve `index.html` (200), no un 404.
+8. Los logs de Railway no muestran contraseñas, tokens ni emails.
+
 ---
 
 ## 9. Decisiones abiertas y mejoras futuras
@@ -614,6 +631,7 @@ Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pe
 - **Redis** para el límite de solicitudes si la API pasa a tener más de una instancia.
 - **SQLAlchemy 2.1**: ya existe; se empezó con 2.0.x (lo que define el stack). Migrar es un cambio de versión, con el mismo estilo de código 2.0.
 - **`httpx2`**: Starlette avisa que `TestClient` con `httpx` está obsoleto y sugiere `httpx2`; cambiarlo cuando sea estable (requiere aprobar la dependencia).
-- **Restablecer los datos demo** periódicamente (hoy no hace falta: el demo no puede escribir).
+- **Refrescar los datos demo** periódicamente: el demo no puede escribir, pero las fechas de `seed-demo` son relativas al día en que se corre, así que a los ~30 días la gráfica del demo se vacía. Por ahora se corre a mano cada mes (§8.2, paso 4); más adelante, un servicio *cron* de Railway que ejecute `python -m app.cli seed-demo`.
+- **Cerrar el bypass de Cloudflare por el edge de Railway** (§5.5): una *Transform Rule* de Cloudflare agrega un header secreto a cada petición, y la API (en producción) responde 403 a lo que llegue sin él, salvo `/health` para el healthcheck de Railway. Alternativa: aceptar solo conexiones cuya entrada derecha de `X-Forwarded-For` sea un rango de IP de Cloudflare (hay que mantener la lista).
 - **Exportar a CSV** y paginación por cursor si el volumen crece.
 - **Búsqueda con índices bajo RLS** (función `SECURITY DEFINER`, §3.4) si la tabla crece tanto que el `Seq Scan` de la búsqueda se note (decenas de miles de filas).
