@@ -4,6 +4,7 @@ import { ApiError } from "../api/client";
 import { getQuote } from "../api/quotes";
 import type { Note, QuoteDetail, StatusChange } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { NoteForm } from "../components/NoteForm";
 import { ErrorState, LoadingState } from "../components/States";
 import { StatusBadge } from "../components/StatusBadge";
 import { StatusControl } from "../components/StatusControl";
@@ -61,7 +62,7 @@ export function QuoteDetailPage() {
       />
     );
   } else {
-    content = <Detail quote={data} canEdit={canEdit} onChange={(quote) => setData(() => quote)} />;
+    content = <Detail quote={data} canEdit={canEdit} update={setData} />;
   }
 
   return (
@@ -113,10 +114,11 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 interface DetailProps {
   quote: QuoteDetail;
   canEdit: boolean;
-  onChange: (quote: QuoteDetail) => void;
+  // Forma "función" (prev => nuevo): cada escritura parte de los datos más recientes
+  update: (fn: (prev: QuoteDetail) => QuoteDetail) => void;
 }
 
-function Detail({ quote, canEdit, onChange }: DetailProps) {
+function Detail({ quote, canEdit, update }: DetailProps) {
   const headingRef = useFocusOnMount<HTMLHeadingElement>();
   // tel: solo admite dígitos y "+"; (305) 555-0142 → tel:3055550142
   const telHref = `tel:${quote.phone.replace(/[^\d+]/g, "")}`;
@@ -156,6 +158,9 @@ function Detail({ quote, canEdit, onChange }: DetailProps) {
 
           <Section title="Notes">
             <NotesList notes={quote.notes} />
+            {canEdit && (
+              <NoteForm quoteId={quote.id} onAdded={(note) => update((prev) => ({ ...prev, notes: [...prev.notes, note] }))} />
+            )}
           </Section>
         </div>
 
@@ -177,7 +182,7 @@ function Detail({ quote, canEdit, onChange }: DetailProps) {
 
           {canEdit && (
             <Section title="Change status">
-              <StatusControl quote={quote} onChange={onChange} />
+              <StatusControl quote={quote} onChange={(updated) => update(() => updated)} />
             </Section>
           )}
 
