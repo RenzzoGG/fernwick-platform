@@ -4,7 +4,7 @@ Sistema de cotizaciones de **Fernwick Home Cleaning**, un negocio de limpieza fi
 
 - `api/` — Python + FastAPI + PostgreSQL (SQLAlchemy 2.0, Alembic, pytest).
 - `admin/` — panel en React + TypeScript + Vite + Tailwind CSS.
-- `docs/DESIGN.md` — diseño completo: modelo de datos, endpoints, seguridad, fases y despliegue.
+- `docs/DESIGN.md` — diseño completo: modelo de datos, endpoints, seguridad, fases y despliegue (ver también [Despliegue](#despliegue-railway--cloudflare)).
 
 ## API: desarrollo local
 
@@ -263,3 +263,10 @@ npm run preview     # sirve dist/ en http://localhost:4173 para revisar el build
   Después de volver a entrar, regresa a la página donde estaba (`?next=`).
 - **Páginas**: `/dashboard` (métricas; es la página de inicio), `/quotes` (lista) y `/quotes/:id` (detalle). El admin cambia el estado (con confirmación) y agrega notas desde el detalle; el demo ve lo mismo sin controles de edición.
 - **Escrituras rechazadas**: si la API responde `403` (p. ej. una escritura forzada desde la consola con la cuenta demo), el panel muestra *"This account is read-only"* y vuelve a pedir `/auth/me`. Si el estado ya era ese (`409`, quizá otro admin lo cambió), relee la cotización y lo avisa.
+
+## Despliegue (Railway + Cloudflare)
+
+- Tres servicios en un proyecto de Railway: **Postgres**, **api** (Root Directory `/api`) y **admin** (Root Directory `/admin`, sitio estático con Caddy). Dominios: [fernwick-api.renzzogg.com](https://fernwick-api.renzzogg.com) y [fernwick-admin.renzzogg.com](https://fernwick-admin.renzzogg.com), detrás de Cloudflare.
+- **La configuración de cada servicio se pone a mano en *Settings* de Railway**: start, pre-deploy, healthcheck, watch paths, reinicio y sleep. Los valores exactos están en `docs/DESIGN.md` §8.1. No hay `railway.json` en el repo: Railway declaró obsoleto *Config as Code* (los servicios nuevos no pueden activarlo y deja de leerse el 2026-12-01), y por ahora no se usa su reemplazo, *Infrastructure as Code*.
+- Variables, orden del primer despliegue (migración, contraseña de `fernwick_app`, seed demo y admin), Cloudflare y prueba de humo: `docs/DESIGN.md` §8.2–§8.5.
+- Cada push a `main` despliega los servicios cuyos *watch paths* cambiaron.

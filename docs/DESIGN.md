@@ -550,7 +550,7 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 | 7 | Panel I | Vite + React + Tailwind, login (incluido "Ver demo"), lista con filtro/búsqueda, detalle | Probado a mano contra la API local con admin y con demo; `npm run build` sin errores |
 | 8 | Panel II | Cambiar estado, agregar notas, tablero de métricas, banner y modo demo | Flujo completo admin; con demo no hay botones de edición y la API rechaza escrituras forzadas |
 | 9 | Conectar la landing | (Repo `fernwick-home-cleaning`) `fetch` real a la API, campo honeypot, manejo de errores 422/429 | Enviar desde la landing local → aparece en el panel local; subir `?v=` del JS según sus reglas |
-| 10 | Despliegue | `railway.json`, servicios de Railway, variables, dominios en Cloudflare, migraciones, admin y seed en producción; `Retry-After` expuesto por CORS | Prueba de humo (§8.5): `/health`, cotización desde `fernwick.renzzogg.com`, login admin, demo sin datos reales, CORS desde un origen no permitido falla |
+| 10 | Despliegue | Servicios de Railway (ajustes a mano, §8.1), variables, dominios en Cloudflare, migraciones, admin y seed en producción; `Retry-After` expuesto por CORS | Prueba de humo (§8.5): `/health`, cotización desde `fernwick.renzzogg.com`, login admin, demo sin datos reales, CORS desde un origen no permitido falla |
 
 ---
 
@@ -561,12 +561,29 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 | Servicio | Origen | Configuración |
 |---|---|---|
 | **Postgres** | Plantilla PostgreSQL de Railway | Volumen persistente. Elegir la versión mayor más cercana a la local (PostgreSQL 18; **mínimo 16**, por `GRANT … WITH INHERIT FALSE, SET TRUE` de la migración `0003`) y verificar compatibilidad con `pg_trgm`. |
-| **api** | Este repo, *Root Directory* `api/` | Railpack (Python). Start: `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers` (la IP real la decide la app según `CLIENT_IP_HEADER`, §5.5). *Pre-deploy command*: `alembic upgrade head` (si la migración falla, no se publica la versión nueva). *Healthcheck*: `/health` (120 s). Reinicio `ON_FAILURE` (3 intentos). *Watch paths*: `/api/**`. Todo en `api/railway.json`. |
-| **admin** | Este repo, *Root Directory* `admin/` | Railpack (Node) con `npm ci` + `npm run build`, servido como sitio estático con Caddy: `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci` (igual que la landing). *Watch paths*: `/admin/**` (`admin/railway.json`, **sin** start command: con uno, Railpack lo trataría como app de Node y no serviría `dist/`). Caddy responde `index.html` en las rutas que no son archivos, así recargar `/quotes/42` funciona con React Router. `VITE_API_URL` definida antes del build. |
+| **api** | Este repo, *Root Directory* `/api` | Railpack (Python 3.14, por `.python-version`). Ajustes en la tabla de abajo. |
+| **admin** | Este repo, *Root Directory* `/admin` | Railpack (Node) con `npm ci` + `npm run build`, servido como sitio estático con Caddy: `RAILPACK_SPA_OUTPUT_DIR=dist`, `RAILPACK_NODE_NPM_INSTALL=npm ci` (igual que la landing). **Sin** start command: con uno, Railpack lo trataría como app de Node y no serviría `dist/`. Caddy responde `index.html` en las rutas que no son archivos, así recargar `/quotes/42` funciona con React Router. `VITE_API_URL` definida antes del build. |
 
-- **Watch paths** evitan que un cambio solo en `admin/` vuelva a desplegar la API y viceversa.
-- **Configuración como código** (fase 10): `api/railway.json` y `admin/railway.json` guardan builder, start, pre-deploy, healthcheck, reinicio y watch paths, así quedan en git y se revisan como el resto del código. Tienen prioridad sobre lo que diga la interfaz de Railway. El archivo **no** sigue el *Root Directory*: en cada servicio hay que indicar su ruta absoluta (*Settings → Config-as-code*: `/api/railway.json`, `/admin/railway.json`). Las variables no van ahí (algunas son secretas): se definen en la interfaz. JSON no admite comentarios, por eso la explicación está aquí.
-- **Sin "sleep"** (`sleepApplication: false`): ver §8.4.
+**Ajustes de cada servicio, puestos a mano en *Settings*** (esta tabla es la fuente de verdad: no hay archivo de configuración en el repo):
+
+| Sección de *Settings* | Ajuste | api | admin |
+|---|---|---|---|
+| Source | Root Directory | `/api` | `/admin` |
+| Source | Branch | `main` | `main` |
+| Build | Builder | Railpack | Railpack |
+| Build | Custom Build Command | *(vacío)* | *(vacío: Railpack corre `npm run build`)* |
+| Build | Watch Paths | `/api/**` | `/admin/**` |
+| Deploy | Custom Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-proxy-headers` | *(vacío)* |
+| Deploy | Pre-deploy Command | `alembic upgrade head` | *(vacío)* |
+| Deploy | Healthcheck Path | `/health` | *(vacío)* |
+| Deploy | Healthcheck Timeout | `120` s (si el campo no aparece: variable `RAILWAY_HEALTHCHECK_TIMEOUT_SEC=120`) | — |
+| Deploy | Restart Policy | On Failure, 3 reintentos | On Failure (por defecto) |
+| Deploy | Serverless / App Sleeping | **apagado** | **apagado** |
+| Networking | Custom Domain | `fernwick-api.renzzogg.com` | `fernwick-admin.renzzogg.com` |
+| Networking | Dominio `*.up.railway.app` | **borrado** (§8.3) | borrado |
+
+- **Por qué cada uno.** `--no-proxy-headers`: la IP real la decide la app según `CLIENT_IP_HEADER` (§5.5). Pre-deploy: si la migración falla, no se publica la versión nueva. Healthcheck: Railway solo pasa el tráfico a la versión nueva cuando `/health` responde 2xx (lo pide con el host `healthcheck.railway.app`; la API no filtra por host, así que no hay que permitirlo en ningún lado). Watch paths: son patrones estilo `.gitignore` que se leen **desde la raíz del repo** aunque haya *Root Directory*, por eso llevan `/api/` delante; evitan que un cambio solo en `admin/` vuelva a desplegar la API y viceversa. Sin "sleep": ver §8.4.
+- **Por qué a mano y no en un archivo (fase 10).** Primero se escribió un `railway.json` por servicio (*Config as Code*), pero Railway lo declaró **obsoleto**: los servicios nuevos ya no pueden activarlo, y los archivos existentes dejan de leerse el **2026-12-01**. Su reemplazo es *Infrastructure as Code* (un archivo `.railway/railway.ts` que se aplica con `railway config plan` / `apply`). Hoy no se usa: exige la CLI de Railway y el paquete npm `railway` (otra dependencia, y en un proyecto Python), y su referencia no menciona watch paths, política de reinicio ni sleep. Los `railway.json` se borraron: Railway no los leería, y dejarlos haría creer que la configuración vive ahí. Ver §9.
 - Un push a `main` despliega ambos servicios automáticamente (lo hace el usuario, nunca Claude).
 
 ### 8.2 Variables
@@ -576,7 +593,7 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 
 **Primer despliegue (una sola vez, fase 10).** La migración `0003` crea los roles: necesita un dueño superusuario o con `CREATEROLE`. En Railway el usuario `postgres` es superusuario, así que no hace falta nada especial. El orden importa, porque `fernwick_app` nace **sin contraseña** y la API no puede entrar hasta que se la pongamos:
 
-1. Crear Postgres y los servicios `api` y `admin` como **servicios vacíos** (sin repo todavía): al conectar un repo, Railway despliega en el acto, y sin variables ese despliegue fallaría. Definir *Root Directory*, *Config-as-code* y las variables de la API, salvo `DATABASE_URL`.
+1. Crear Postgres y los servicios `api` y `admin` como **servicios vacíos** (sin repo todavía): al conectar un repo, Railway despliega en el acto, y sin variables ese despliegue fallaría. Definir los ajustes de *Settings* (§8.1) y las variables de la API, salvo `DATABASE_URL`.
 2. Migrar como dueño **desde tu PC** con la URL **pública** del dueño (`DATABASE_PUBLIC_URL` del servicio Postgres): `${{Postgres.DATABASE_URL}}` usa el host privado (`postgres.railway.internal`), que solo se alcanza desde dentro de Railway. La URL se lee con `read -rsp` (no se muestra ni queda en el historial) y se pasa solo a ese comando: `MIGRATIONS_DATABASE_URL="$OWNER_URL" alembic upgrade head`. El resto de la configuración sale del `.env` local, que no afecta a la migración.
 3. Poner la contraseña de `fernwick_app`: `psql "$OWNER_URL"` y `\password fernwick_app`. psql calcula el hash SCRAM en tu PC, así que la contraseña no viaja en texto ni queda en los logs del servidor (con `ALTER ROLE … PASSWORD '…'` sí podría) ni en `~/.psql_history`. Se genera con `secrets.token_urlsafe(32)` (solo `A-Z a-z 0-9 - _`: va en la URL sin codificar), se copia con `clip.exe` y se guarda en un gestor de contraseñas.
 4. Datos demo y admin, también desde tu PC: `MIGRATIONS_DATABASE_URL="$OWNER_URL" python -m app.cli seed-demo` (solo el dueño puede escribir filas demo) y `DATABASE_URL="$OWNER_URL" python -m app.cli create-admin --email …` (como dueño; la política de `users` es `true`, así que da igual). Luego `unset OWNER_URL`.
@@ -634,4 +651,5 @@ Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pe
 - **Refrescar los datos demo** periódicamente: el demo no puede escribir, pero las fechas de `seed-demo` son relativas al día en que se corre, así que a los ~30 días la gráfica del demo se vacía. Por ahora se corre a mano cada mes (§8.2, paso 4); más adelante, un servicio *cron* de Railway que ejecute `python -m app.cli seed-demo`.
 - **Cerrar el bypass de Cloudflare por el edge de Railway** (§5.5): una *Transform Rule* de Cloudflare agrega un header secreto a cada petición, y la API (en producción) responde 403 a lo que llegue sin él, salvo `/health` para el healthcheck de Railway. Alternativa: aceptar solo conexiones cuya entrada derecha de `X-Forwarded-For` sea un rango de IP de Cloudflare (hay que mantener la lista).
 - **Exportar a CSV** y paginación por cursor si el volumen crece.
+- **Infrastructure as Code de Railway** (`.railway/railway.ts`): pasar a un archivo los ajustes de §8.1 cuando cubra watch paths, reinicio y sleep, y si se acepta la CLI y el paquete `railway` como herramientas de despliegue. El `apply` sería manual o desde GitHub Actions: Railway no lee `.railway/` al desplegar.
 - **Búsqueda con índices bajo RLS** (función `SECURITY DEFINER`, §3.4) si la tabla crece tanto que el `Seq Scan` de la búsqueda se note (decenas de miles de filas).
