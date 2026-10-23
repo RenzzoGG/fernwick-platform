@@ -3,7 +3,7 @@
 Sistema de cotizaciones de **Fernwick Home Cleaning**, un negocio de limpieza ficticio de concepto (proyecto de portafolio). La landing ([fernwick.renzzogg.com](https://fernwick.renzzogg.com)) envía cotizaciones a esta API, y un panel de administración permite gestionarlas.
 
 - `api/` — Python + FastAPI + PostgreSQL (SQLAlchemy 2.0, Alembic, pytest).
-- `admin/` — panel en React + Vite + Tailwind CSS (fase 7).
+- `admin/` — panel en React + TypeScript + Vite + Tailwind CSS.
 - `docs/DESIGN.md` — diseño completo: modelo de datos, endpoints, seguridad, fases y despliegue.
 
 ## API: desarrollo local
@@ -225,3 +225,38 @@ Las pruebas usan la base de `TEST_DATABASE_URL` (`fernwick_test`), nunca la de d
 | `CLIENT_IP_HEADER` | `none` | De dónde sale la IP del visitante para el límite de solicitudes: `none` (IP de la conexión), `x-forwarded-for` o `cf-connecting-ip` (producción). Con `none` los encabezados de proxy se ignoran |
 
 La lista completa (incluidas las de fases futuras) está en `docs/DESIGN.md` §5.6.
+
+## Panel de administración: desarrollo local
+
+React 19 + TypeScript + Vite + Tailwind CSS v4 + React Router, con `fetch` nativo. La interfaz está en inglés, igual que la landing.
+
+### Requisitos
+
+- Node.js 24 y npm 11 (con los que se generó `package-lock.json`).
+- La API corriendo en `http://localhost:8000`, con `http://localhost:5173` en `CORS_ORIGINS`. Para "View demo" hace falta además `DEMO_ENABLED=true` y haber corrido `seed-demo`.
+
+### Primera vez
+
+```bash
+cd admin
+npm ci                    # instala exactamente lo de package-lock.json
+cp .env.example .env      # VITE_API_URL (no es secreta: queda dentro del JavaScript publicado)
+```
+
+### Comandos
+
+```bash
+npm run dev         # http://localhost:5173, con recarga al guardar
+npm run typecheck   # solo verifica los tipos (tsc --noEmit)
+npm run build       # tsc --noEmit + vite build → dist/ (falla si falta VITE_API_URL)
+npm run preview     # sirve dist/ en http://localhost:4173 para revisar el build
+```
+
+- **Dependencias**: versiones exactas (`.npmrc` con `save-exact=true`). Cualquier paquete nuevo necesita aprobación (CLAUDE.md).
+- **Tipos de la API**: están en `src/api/types.ts`, escritos a mano a partir de `api/app/schemas/`. Si cambia un esquema, se actualizan en el mismo commit.
+- **Sesión**: el token se guarda en memoria y en `sessionStorage`, así sobrevive a F5 pero se borra al cerrar la pestaña. El panel vuelve al login, con el aviso *"Your session has expired"*, en tres casos:
+  - cuando vence el token, por un temporizador basado en `expires_in`;
+  - cuando la API responde 401 a cualquier petición;
+  - si al recargar la página `/auth/me` falla.
+  
+  Después de volver a entrar, regresa a la página donde estaba (`?next=`).
