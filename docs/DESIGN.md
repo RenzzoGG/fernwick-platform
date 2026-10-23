@@ -452,7 +452,7 @@ Detalles de comportamiento:
 | `BUSINESS_TIMEZONE` | api | no | `America/New_York` (zona del negocio ficticio) |
 | `ENVIRONMENT` | api | no | `development` / `production` (activa `/docs`, nivel de logs) |
 | `CLIENT_IP_HEADER` | api | no | `none` (desarrollo) / `x-forwarded-for` / `cf-connecting-ip` (producción). De dónde sale la IP del visitante (§5.5) |
-| `VITE_API_URL` | admin | **no** | `https://fernwick-api.renzzogg.com` — se incrusta en el JS en el build, así que es **pública** por definición |
+| `VITE_API_URL` | admin | **no** | `https://fernwick-api.renzzogg.com` — se incrusta en el JS en el build, así que es **pública** por definición. Si falta, `npm run build` falla (`vite.config.ts`) para no publicar un panel que apunte a localhost; `npm run dev` usa `http://localhost:8000` |
 
 - Driver de PostgreSQL: **psycopg 3** (`postgresql+psycopg://`). Railway entrega URLs `postgresql://…`; `config.py` las normaliza.
 - En desarrollo local la conexión va por **socket Unix** con autenticación *peer* (sin contraseña): `postgresql+psycopg://renzzo@/fernwick?host=/var/run/postgresql`. Por TCP (`localhost:5432`) el PostgreSQL local exige contraseña.
