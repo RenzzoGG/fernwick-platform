@@ -11,20 +11,31 @@ It is deployed and running in production. You can try it right now:
 
 The demo account is **read-only** and only sees made-up data (40 sample quotes with notes and status history). Real quotes submitted from the landing page are invisible to it, and this is enforced by the database itself, not just by the application code (see below).
 
-<!--
-  SCREENSHOTS — replace the placeholders below with real captures and uncomment this block.
-  Suggested location: docs/screenshots/
+## Screenshots
 
-  ## Screenshots
+**Admin dashboard** (demo account): totals, quotes per day over the last 30 days, and breakdowns by status and service.
 
-  | Dashboard | Quote list | Quote detail |
-  |---|---|---|
-  | ![Dashboard with 30-day chart and totals](docs/screenshots/dashboard.png) | ![Quote list with filters and search](docs/screenshots/quotes-list.png) | ![Quote detail with notes and status history](docs/screenshots/quote-detail.png) |
+![Admin dashboard with totals and a 30-day chart](docs/screenshots/dashboard.png)
 
-  | Landing quote form | Login with "View demo" |
-  |---|---|
-  | ![Quote form on the landing page](docs/screenshots/landing-form.png) | ![Admin login screen](docs/screenshots/login.png) |
--->
+<table>
+  <tr>
+    <th>Quote list</th>
+    <th>Quote detail</th>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/quotes-list.png" alt="Quote list with search, status filter and sorting"></td>
+    <td><img src="docs/screenshots/quote-detail.png" alt="Quote detail with contact info, notes and status history"></td>
+  </tr>
+</table>
+
+**Landing page**, desktop and mobile:
+
+<table>
+  <tr>
+    <td width="77%"><img src="docs/screenshots/landing.png" alt="Landing page hero on desktop"></td>
+    <td width="23%"><img src="docs/screenshots/mobile.png" alt="Landing page hero on mobile"></td>
+  </tr>
+</table>
 
 ## What this project demonstrates
 
