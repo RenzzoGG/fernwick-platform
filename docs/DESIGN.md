@@ -521,9 +521,10 @@ fernwick-platform/
 │   ├── package.json           # Versiones exactas (.npmrc con save-exact=true)
 │   └── .env.example
 ├── docs/
-│   └── DESIGN.md
+│   ├── DESIGN.md
+│   └── DEVELOPMENT.md         # Guía de desarrollo local (comandos, curl, migraciones, pruebas, variables)
 ├── CLAUDE.md
-├── README.md                  # Cómo levantar la API y correr las pruebas
+├── README.md                  # Presentación en inglés para el portafolio (enlaces en vivo, stack, arquitectura)
 └── .gitignore
 ```
 
