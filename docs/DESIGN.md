@@ -22,14 +22,14 @@ Fernwick Home Cleaning es un negocio **ficticio** de concepto. Su landing (`~/pr
 
 - **API** (FastAPI + PostgreSQL): recibe y guarda las cotizaciones, y da servicio al panel.
 - **Panel de administración** (React + Vite + Tailwind): login, lista, detalle, cambio de estado, notas internas y tablero de métricas.
-- **Cuenta demo de solo lectura** para mostrar el panel en vivo a clientes de Upwork **sin exponer datos reales**.
+- **Cuenta demo de solo lectura** para mostrar el panel en vivo como proyecto de portafolio **sin exponer datos reales**.
 
 ```mermaid
 flowchart LR
     V["Visitante"] -->|llena el formulario| L["Landing<br/>fernwick.renzzogg.com"]
     L -->|"POST /v1/public/quotes"| A["API FastAPI<br/>fernwick-api.renzzogg.com"]
     AD["Administrador"] --> P["Panel React<br/>fernwick-admin.renzzogg.com"]
-    D["Cliente de Upwork<br/>(cuenta demo)"] --> P
+    D["Visitante del portafolio<br/>(cuenta demo)"] --> P
     P -->|"JWT en Authorization"| A
     A -->|"SQLAlchemy 2.0"| DB[("PostgreSQL")]
 ```
@@ -530,7 +530,7 @@ fernwick-platform/
 
 - **routers → services → models.** Los routers solo traducen HTTP (validar entrada, códigos de estado); la lógica y las consultas viven en `services/`, que se pueden probar sin HTTP. Para un proyecto de este tamaño no se agrega una capa extra de "repositorios".
 - **SQLAlchemy síncrono** (no `async`): FastAPI ejecuta las rutas `def` en un pool de hilos, el tráfico esperado es mínimo y el código síncrono es más fácil de aprender y probar. Pasar a `async` más adelante es un cambio localizado en `db.py` y los servicios.
-- **Panel:** **TypeScript** (modo `strict`) con React Router (`react-router`) para las páginas y `fetch` nativo (sin axios ni librerías de peticiones). Los tipos de `src/api/types.ts` se escriben a mano a partir de `api/app/schemas/` (sin generadores, para no sumar dependencias): si la API cambia un esquema, se actualizan en el mismo commit. `npm run build` corre `tsc --noEmit` antes de `vite build`, así un error de tipos detiene el build. La **interfaz va en inglés**, como la landing y los mensajes de la API (la demo es para clientes de Upwork); los comentarios del código, en español. Los filtros de la lista viven en la URL (`/quotes?status=new&q=ana&page=2`): Atrás, recargar y compartir el link funcionan. **Gráficas hechas a mano** (fase 8, `pages/DashboardPage.tsx`), sin librería: barras de los últimos 30 días en un `<svg>` con `preserveAspectRatio="none"` (se estira al ancho disponible; los textos de los ejes van en HTML para no deformarse) y barras horizontales con divs de Tailwind para estado y servicio. Cada gráfica es un `<figure>` con un resumen en texto y una tabla con los datos en `<details>`; el SVG va `aria-hidden`. Se descartó Recharts: sumaba ~90 KB gzip (el panel entero pesa ~93 KB), su SVG no es accesible por defecto y la tabla alternativa había que hacerla igual.
+- **Panel:** **TypeScript** (modo `strict`) con React Router (`react-router`) para las páginas y `fetch` nativo (sin axios ni librerías de peticiones). Los tipos de `src/api/types.ts` se escriben a mano a partir de `api/app/schemas/` (sin generadores, para no sumar dependencias): si la API cambia un esquema, se actualizan en el mismo commit. `npm run build` corre `tsc --noEmit` antes de `vite build`, así un error de tipos detiene el build. La **interfaz va en inglés**, como la landing y los mensajes de la API (la demo es pública, como proyecto de portafolio); los comentarios del código, en español. Los filtros de la lista viven en la URL (`/quotes?status=new&q=ana&page=2`): Atrás, recargar y compartir el link funcionan. **Gráficas hechas a mano** (fase 8, `pages/DashboardPage.tsx`), sin librería: barras de los últimos 30 días en un `<svg>` con `preserveAspectRatio="none"` (se estira al ancho disponible; los textos de los ejes van en HTML para no deformarse) y barras horizontales con divs de Tailwind para estado y servicio. Cada gráfica es un `<figure>` con un resumen en texto y una tabla con los datos en `<details>`; el SVG va `aria-hidden`. Se descartó Recharts: sumaba ~90 KB gzip (el panel entero pesa ~93 KB), su SVG no es accesible por defecto y la tabla alternativa había que hacerla igual.
 - **Tests de la API**: fixtures en `tests/conftest.py` (`db_session`, `client`, `admin`, `demo`) y funciones de apoyo en `tests/helpers.py` (`bearer`, `make_quote`, `local`, `como_rol`). La conexión de las pruebas es del dueño (que salta RLS, para preparar filas reales y demo); el `client` corre cada petición como `fernwick_app`/`fernwick_demo`, igual que en producción, así que las pruebas de la API también prueban RLS. Corren contra una base PostgreSQL real `fernwick_test` (no SQLite): RLS, `pg_trgm` y `generate_series` no existen en SQLite, y lo que queremos probar es justamente eso. Cada test corre dentro de una transacción que se revierte al final.
 
 ---

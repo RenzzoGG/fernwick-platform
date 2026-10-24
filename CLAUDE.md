@@ -4,7 +4,7 @@ Reglas de trabajo para este repositorio.
 
 ## Sobre el proyecto
 
-- **Fernwick Platform**: sistema de cotizaciones de Fernwick Home Cleaning, un negocio de limpieza **ficticio** de concepto. Forma parte del portafolio de Renzzo (renzzogg.com) y se muestra en vivo a clientes de Upwork.
+- **Fernwick Platform**: sistema de cotizaciones de Fernwick Home Cleaning, un negocio de limpieza **ficticio** de concepto. Es un proyecto de portafolio de Renzzo (renzzogg.com), con una demo en vivo.
 - La landing vive en otro repo (`~/proyectos/fernwick-home-cleaning`, en **fernwick.renzzogg.com**) y envía las cotizaciones a esta API. Ese repo tiene su propio `CLAUDE.md`; si una tarea lo toca, se siguen sus reglas.
 - Dos partes en este repo:
   - `api/`: Python + FastAPI, PostgreSQL, SQLAlchemy 2.0 + Alembic, JWT, pytest → **fernwick-api.renzzogg.com**.
