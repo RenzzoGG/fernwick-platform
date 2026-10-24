@@ -552,6 +552,8 @@ Cada fase termina con su verificación, un commit local y un REPORTE.
 | 9 | Conectar la landing | (Repo `fernwick-home-cleaning`) `fetch` real a la API, campo honeypot, manejo de errores 422/429 | Enviar desde la landing local → aparece en el panel local; subir `?v=` del JS según sus reglas |
 | 10 | Despliegue | Servicios de Railway (ajustes a mano, §8.1), variables, dominios en Cloudflare, migraciones, admin y seed en producción; `Retry-After` expuesto por CORS | Prueba de humo (§8.5): `/health`, cotización desde `fernwick.renzzogg.com`, login admin, demo sin datos reales, CORS desde un origen no permitido falla |
 
+**Estado (2026-10-23): fases 0–10 completadas.** El sistema está en producción: API en `fernwick-api.renzzogg.com`, panel en `fernwick-admin.renzzogg.com` y la landing `fernwick.renzzogg.com` enviando cotizaciones reales. Resultados de la prueba de humo en §8.5; pendientes en §9.
+
 ---
 
 ## 8. Despliegue en Railway y Cloudflare
@@ -629,7 +631,7 @@ Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pe
 
 ### 8.5 Prueba de humo (después de cada despliegue importante)
 
-1. `curl -s https://fernwick-api.renzzogg.com/health` → `{"status":"ok","db":"ok"}`; `curl -sI` muestra `server: cloudflare`; `/docs` da 404.
+1. `curl -s https://fernwick-api.renzzogg.com/health` → `{"status":"ok","db":"ok"}`; `curl -s -D - -o /dev/null …/health` muestra `server: cloudflare` (con `curl -sI` da 405: `HEAD` no está permitido en `/health`); `/docs` da 404.
 2. Una cotización enviada desde `https://fernwick.renzzogg.com` aparece en el panel.
 3. Login admin: lista, detalle, cambiar estado y agregar nota.
 4. "View demo": banner demo, solo datos ficticios (no aparece la cotización real), sin botones de edición, tablero con datos de 30 días. Un `PATCH` forzado con el token demo → 403.
@@ -637,6 +639,22 @@ Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pe
 6. Seis `POST {}` seguidos a `/v1/public/quotes` (los 422 cuentan para el límite y no crean filas) → el sexto es 429 con `Retry-After` y `access-control-expose-headers: Retry-After`.
 7. Panel: recargar `/quotes/123` devuelve `index.html` (200), no un 404.
 8. Los logs de Railway no muestran contraseñas, tokens ni emails.
+9. No responde ningún dominio `*.up.railway.app` de la API (Railway devuelve `404 Application not found` con `x-railway-fallback: true`).
+
+**Resultado del primer despliegue (fase 10, 2026-10-23).** Los puntos 2–4 los probó el usuario en el navegador: la cotización de la landing llegó al panel y el demo ve solo sus 40 filas, no las reales. El resto se probó con `curl` contra producción, sin crear filas:
+
+| Prueba | Resultado |
+|---|---|
+| `GET /health` | `200 {"status":"ok","db":"ok"}`, `server: cloudflare` |
+| `/docs`, `/openapi.json`, `/redoc` | 404 los tres |
+| Token de `POST /v1/auth/demo` | `/auth/me` → `role: demo`; `GET /v1/quotes` → `total: 40` |
+| `PATCH /v1/quotes/999999999/status` con el token demo (id inexistente y estado inválido) | **403** `"You do not have permission to perform this action."` (la dependencia corre antes que el 404 o el 422) |
+| `POST /v1/quotes/999999999/notes` con el token demo y cuerpo `{}` | **403** |
+| Preflight desde `https://evil.example` | **400**, sin `access-control-allow-origin` |
+| Preflight desde la landing y desde el panel | **200** con `access-control-allow-origin` de cada uno |
+| Seis `POST {}` a `/v1/public/quotes` desde el origen de la landing | cinco **422** y el sexto **429** con `retry-after: 58`, `access-control-allow-origin` y `access-control-expose-headers: Retry-After` |
+| `*.up.railway.app` | Los nombres que Railway suele generar (`api-production`, `fernwick-api-production`, `fernwick-platform-production`, …) dan 404 `Application not found`. Desde fuera no se puede listar los dominios de un servicio: la confirmación definitiva es *Settings → Networking* de la API sin ningún dominio de Railway |
+| Acceso público de Postgres | *TCP Proxy* quitado por el usuario (§8.2, paso 7) |
 
 ---
 
@@ -648,8 +666,9 @@ Para ahorrar se podría activar que la API "duerma" cuando no tiene tráfico, pe
 - **Redis** para el límite de solicitudes si la API pasa a tener más de una instancia.
 - **SQLAlchemy 2.1**: ya existe; se empezó con 2.0.x (lo que define el stack). Migrar es un cambio de versión, con el mismo estilo de código 2.0.
 - **`httpx2`**: Starlette avisa que `TestClient` con `httpx` está obsoleto y sugiere `httpx2`; cambiarlo cuando sea estable (requiere aprobar la dependencia).
-- **Refrescar los datos demo** periódicamente: el demo no puede escribir, pero las fechas de `seed-demo` son relativas al día en que se corre, así que a los ~30 días la gráfica del demo se vacía. Por ahora se corre a mano cada mes (§8.2, paso 4); más adelante, un servicio *cron* de Railway que ejecute `python -m app.cli seed-demo`.
-- **Cerrar el bypass de Cloudflare por el edge de Railway** (§5.5): una *Transform Rule* de Cloudflare agrega un header secreto a cada petición, y la API (en producción) responde 403 a lo que llegue sin él, salvo `/health` para el healthcheck de Railway. Alternativa: aceptar solo conexiones cuya entrada derecha de `X-Forwarded-For` sea un rango de IP de Cloudflare (hay que mantener la lista).
+- **Pendiente: refrescar los datos demo cada mes.** El demo no puede escribir, pero las fechas de `seed-demo` son relativas al día en que se corre, así que a los ~30 días la gráfica del demo se vacía (contar ~30 días desde el seed de la fase 10). Por ahora a mano: activar el *TCP Proxy* de Postgres, correr `seed-demo` como dueño (§8.2, paso 4) y volver a quitarlo. Más adelante, un servicio *cron* de Railway que ejecute `python -m app.cli seed-demo` por la red privada.
+- **Pendiente: cerrar el bypass de Cloudflare por el edge de Railway** (§5.5, riesgo residual aceptado en la fase 10): una *Transform Rule* de Cloudflare agrega un header secreto a cada petición, y la API (en producción) responde 403 a lo que llegue sin él, salvo `/health` para el healthcheck de Railway. Alternativa: aceptar solo conexiones cuya entrada derecha de `X-Forwarded-For` sea un rango de IP de Cloudflare (hay que mantener la lista).
+- **Pendiente (repo `fernwick-home-cleaning`, con sus reglas): servir el HTML de la landing con `Cache-Control: no-cache`**, como hace Pulse. Tras el despliegue de la fase 10, Chrome siguió mostrando la versión vieja de la página (sin el `fetch` a la API) por tenerla en caché. `no-cache` no impide guardar el HTML: obliga al navegador a revalidarlo con el servidor (`ETag`/`Last-Modified`) antes de usarlo, así que un cambio se ve en la siguiente visita; los `.js`/`.css` siguen cacheándose con su `?v=`.
 - **Exportar a CSV** y paginación por cursor si el volumen crece.
 - **Infrastructure as Code de Railway** (`.railway/railway.ts`): pasar a un archivo los ajustes de §8.1 cuando cubra watch paths, reinicio y sleep, y si se acepta la CLI y el paquete `railway` como herramientas de despliegue. El `apply` sería manual o desde GitHub Actions: Railway no lee `.railway/` al desplegar.
 - **Búsqueda con índices bajo RLS** (función `SECURITY DEFINER`, §3.4) si la tabla crece tanto que el `Seq Scan` de la búsqueda se note (decenas de miles de filas).
